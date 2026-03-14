@@ -1,0 +1,99 @@
+# RocketRide PR Reviewer - Example Workflow
+#
+# This workflow runs multi-agent AI code reviews on pull requests using
+# three independent reviewer agents (Claude, GPT, Gemini). Each agent
+# posts reviews under its own GitHub App identity.
+#
+# Prerequisites:
+#   1. Create three GitHub Apps (claude-reviewer, gpt-reviewer, gemini-reviewer).
+#      Run `python scripts/setup_apps.py` for guided setup.
+#   2. Add the required repository secrets (see below).
+#
+# Required repository secrets:
+#   - OPENAI_API_KEY:          OpenAI API key for GPT reviewer
+#   - ANTHROPIC_API_KEY:       Anthropic API key for Claude reviewer and aggregator
+#   - GOOGLE_API_KEY:          Google AI API key for Gemini reviewer
+#   - CLAUDE_APP_ID:           GitHub App ID for claude-reviewer[bot]
+#   - CLAUDE_APP_PRIVATE_KEY:  Private key (.pem contents) for claude-reviewer[bot]
+#   - GPT_APP_ID:              GitHub App ID for gpt-reviewer[bot]
+#   - GPT_APP_PRIVATE_KEY:     Private key (.pem contents) for gpt-reviewer[bot]
+#   - GEMINI_APP_ID:           GitHub App ID for gemini-reviewer[bot]
+#   - GEMINI_APP_PRIVATE_KEY:  Private key (.pem contents) for gemini-reviewer[bot]
+
+name: AI Code Review
+
+on:
+  # Trigger on new and updated pull requests targeting the main branch.
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+  # Trigger when a developer replies to a review comment, enabling
+  # scoped conversation where only the addressed agent responds.
+  pull_request_review_comment:
+    types: [created]
+
+  # Trigger on general PR issue comments (e.g., "@claude-reviewer explain this").
+  issue_comment:
+    types: [created]
+
+# Prevent multiple reviews from running simultaneously on the same PR.
+# The group key ensures that a new push cancels any in-progress review.
+concurrency:
+  group: rocketride-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+# Minimum permissions required by the action. The GitHub Apps handle
+# their own authentication for posting reviews; this token is used
+# only for reading event context.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  review:
+    name: RocketRide AI Review
+    runs-on: ubuntu-latest
+
+    # Only run on PR-related issue comments (skip issue-only comments).
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'pull_request_review_comment' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run RocketRide PR Reviewer
+        uses: your-org/rocketride-reviewer@main  # Replace with your fork or the published action
+        with:
+          # LLM API keys - each key is used by the corresponding reviewer agent.
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+
+          # GitHub App credentials for claude-reviewer[bot].
+          # This app also powers the aggregator that deduplicates comments.
+          claude_app_id: ${{ secrets.CLAUDE_APP_ID }}
+          claude_app_private_key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+
+          # GitHub App credentials for gpt-reviewer[bot].
+          gpt_app_id: ${{ secrets.GPT_APP_ID }}
+          gpt_app_private_key: ${{ secrets.GPT_APP_PRIVATE_KEY }}
+
+          # GitHub App credentials for gemini-reviewer[bot].
+          gemini_app_id: ${{ secrets.GEMINI_APP_ID }}
+          gemini_app_private_key: ${{ secrets.GEMINI_APP_PRIVATE_KEY }}
+
+          # Only review PRs targeting this branch. Default: "main".
+          target_branch: "main"
+
+          # Review scope: "full" sends file context alongside the diff for
+          # richer reviews. "diff" sends only the diff for faster, cheaper runs.
+          review_context: "full"
+
+          # Path to optional config file for custom ignore patterns and thresholds.
+          # See docs/SETUP.md for configuration options.
+          config_path: ".rocketride-review.yml"

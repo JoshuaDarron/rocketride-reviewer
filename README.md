@@ -14,6 +14,8 @@ on:
     branches: [main]
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
 
 jobs:
   review:
@@ -43,7 +45,7 @@ That's it. Open a PR targeting `main` and all three agents will post reviews wit
 3. A Claude-based aggregator deduplicates overlapping comments across agents
 4. Each agent posts its review under its own GitHub App identity (`claude-reviewer[bot]`, `gpt-reviewer[bot]`, `gemini-reviewer[bot]`)
 5. If no critical or high severity issues are found, all three agents auto-approve the PR
-6. Reply to any agent's comment and only that agent responds — scoped, conversational follow-up
+6. Reply to any agent's comment (in PR comments or inline review comments) and only that agent responds -- scoped, conversational follow-up with full thread context
 
 ## Architecture
 
@@ -62,7 +64,7 @@ That's it. Open a PR targeting `main` and all three agents will post reviews wit
 
 **Full Review** — Triggered on PR open/update. All three agents review the diff in parallel. The aggregator removes duplicate findings (same file, same line range, same intent) before posting.
 
-**Conversation Reply** — Triggered when a developer replies to an agent's comment. Only the originating agent runs, receiving the comment thread and surrounding file context. The other two agents stay silent.
+**Conversation Reply** — Triggered when a developer replies to an agent's comment via `issue_comment` or `pull_request_review_comment` events. Only the originating agent runs, receiving the full comment thread and surrounding file context. The other two agents stay silent.
 
 ### Approval Logic
 
@@ -148,6 +150,7 @@ See the [Setup Guide](docs/SETUP.md) for step-by-step instructions on creating t
 | `gpt_app_private_key` | Yes | — | GPT reviewer GitHub App private key |
 | `gemini_app_id` | Yes | — | Gemini reviewer GitHub App ID |
 | `gemini_app_private_key` | Yes | — | Gemini reviewer GitHub App private key |
+| `target_branch` | No | `main` | Only review PRs targeting this branch |
 | `review_context` | No | `full` | `full` or `diff` |
 | `config_path` | No | `.rocketride-review.yml` | Path to config file |
 
@@ -189,6 +192,7 @@ src/
 ├── config.py           # Configuration and constants
 ├── models.py           # Pydantic models (ReviewComment, AgentReview, etc.)
 ├── filters.py          # File ignore pattern matching
+├── retry.py            # Retry with exponential backoff for transient errors
 └── errors.py           # Exception hierarchy
 ```
 

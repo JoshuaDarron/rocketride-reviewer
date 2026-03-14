@@ -2,6 +2,10 @@ name: "RocketRide PR Reviewer"
 description: "Multi-agent AI code review using Claude, GPT, and Gemini via RocketRide"
 author: "Joshua Phillips"
 
+branding:
+  icon: "code"
+  color: "blue"
+
 inputs:
   openai_api_key:
     description: "OpenAI API key for GPT reviewer agent"
@@ -30,6 +34,10 @@ inputs:
   gemini_app_private_key:
     description: "GitHub App private key for gemini-reviewer[bot]"
     required: true
+  target_branch:
+    description: "Only review PRs targeting this branch"
+    required: false
+    default: "main"
   review_context:
     description: "Review scope: 'full' (include file context) or 'diff' (diff only)"
     required: false
@@ -63,6 +71,7 @@ runs:
         INPUT_GPT_APP_PRIVATE_KEY: ${{ inputs.gpt_app_private_key }}
         INPUT_GEMINI_APP_ID: ${{ inputs.gemini_app_id }}
         INPUT_GEMINI_APP_PRIVATE_KEY: ${{ inputs.gemini_app_private_key }}
+        INPUT_TARGET_BRANCH: ${{ inputs.target_branch }}
         INPUT_REVIEW_CONTEXT: ${{ inputs.review_context }}
         INPUT_CONFIG_PATH: ${{ inputs.config_path }}
       run: python -m src.main
