@@ -1,4 +1,4 @@
-"""Tests for gating logic, orchestration, and multi-agent approval."""
+"""Tests for gating logic, orchestration, conversation, and multi-agent approval."""
 
 from __future__ import annotations
 
@@ -9,10 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import BOT_USERNAMES
 from src.main import (
     _build_agent_failure_message,
     _determine_cross_agent_statuses,
     _extract_changed_files,
+    _format_thread_context,
+    _handle_conversation_reply,
+    _identify_target_agent,
     _initialize_agents,
     run,
     should_run,
@@ -53,41 +57,100 @@ def pr_sync_event() -> dict[str, object]:
     }
 
 
+@pytest.fixture()
+def review_comment_event() -> dict[str, object]:
+    """A pull_request_review_comment event from a developer replying to a bot."""
+    return {
+        "action": "created",
+        "comment": {
+            "id": 200,
+            "user": {"login": "developer"},
+            "body": "Can you explain why this is an issue?",
+            "in_reply_to_id": 100,
+            "path": "src/utils.py",
+            "line": 11,
+        },
+        "pull_request": {
+            "number": 42,
+        },
+        "repository": {"full_name": "owner/repo"},
+    }
+
+
+@pytest.fixture()
+def review_comment_event_from_bot() -> dict[str, object]:
+    """A pull_request_review_comment event from a bot (should be skipped)."""
+    return {
+        "action": "created",
+        "comment": {
+            "id": 201,
+            "user": {"login": "claude-reviewer[bot]"},
+            "body": "Here is my explanation.",
+            "in_reply_to_id": 100,
+        },
+        "pull_request": {
+            "number": 42,
+        },
+        "repository": {"full_name": "owner/repo"},
+    }
+
+
+@pytest.fixture()
+def review_comment_event_not_reply() -> dict[str, object]:
+    """A pull_request_review_comment event that is not a reply (no in_reply_to_id)."""
+    return {
+        "action": "created",
+        "comment": {
+            "id": 202,
+            "user": {"login": "developer"},
+            "body": "New top-level comment.",
+        },
+        "pull_request": {
+            "number": 42,
+        },
+        "repository": {"full_name": "owner/repo"},
+    }
+
+
 class TestShouldRun:
     """Tests for gating logic."""
 
     def test_pr_opened_on_main(
         self, pr_opened_event: dict[str, object], default_config: ReviewConfig
     ) -> None:
-        assert should_run(pr_opened_event, "pull_request", default_config)
+        assert (
+            should_run(pr_opened_event, "pull_request", default_config) == "full_review"
+        )
 
     def test_pr_synchronize_on_main(
         self, pr_sync_event: dict[str, object], default_config: ReviewConfig
     ) -> None:
-        assert should_run(pr_sync_event, "pull_request", default_config)
+        assert (
+            should_run(pr_sync_event, "pull_request", default_config) == "full_review"
+        )
 
     def test_wrong_event_type(
         self, pr_opened_event: dict[str, object], default_config: ReviewConfig
     ) -> None:
-        assert not should_run(pr_opened_event, "issue_comment", default_config)
+        assert should_run(pr_opened_event, "issue_comment", default_config) is None
 
     def test_wrong_action(self, default_config: ReviewConfig) -> None:
         event = {
             "action": "closed",
             "pull_request": {"base": {"ref": "main"}},
         }
-        assert not should_run(event, "pull_request", default_config)
+        assert should_run(event, "pull_request", default_config) is None
 
     def test_wrong_branch(self, default_config: ReviewConfig) -> None:
         event = {
             "action": "opened",
             "pull_request": {"base": {"ref": "develop"}},
         }
-        assert not should_run(event, "pull_request", default_config)
+        assert should_run(event, "pull_request", default_config) is None
 
     def test_custom_target_branch(self, pr_opened_event: dict[str, object]) -> None:
         config = ReviewConfig(target_branch="develop")
-        assert not should_run(pr_opened_event, "pull_request", config)
+        assert should_run(pr_opened_event, "pull_request", config) is None
 
     def test_matches_custom_target_branch(self) -> None:
         event = {
@@ -95,15 +158,376 @@ class TestShouldRun:
             "pull_request": {"base": {"ref": "develop"}},
         }
         config = ReviewConfig(target_branch="develop")
-        assert should_run(event, "pull_request", config)
+        assert should_run(event, "pull_request", config) == "full_review"
 
     def test_push_event_rejected(self, default_config: ReviewConfig) -> None:
         event = {"ref": "refs/heads/main"}
-        assert not should_run(event, "push", default_config)
+        assert should_run(event, "push", default_config) is None
 
     def test_missing_pull_request_payload(self, default_config: ReviewConfig) -> None:
         event = {"action": "opened"}
-        assert not should_run(event, "pull_request", default_config)
+        assert should_run(event, "pull_request", default_config) is None
+
+
+class TestConversationGating:
+    """Tests for conversation reply gating logic."""
+
+    def test_developer_replying_to_bot_triggers_conversation(
+        self,
+        review_comment_event: dict[str, object],
+        default_config: ReviewConfig,
+    ) -> None:
+        result = should_run(
+            review_comment_event, "pull_request_review_comment", default_config
+        )
+        assert result == "conversation"
+
+    def test_bot_comment_skipped_loop_prevention(
+        self,
+        review_comment_event_from_bot: dict[str, object],
+        default_config: ReviewConfig,
+    ) -> None:
+        result = should_run(
+            review_comment_event_from_bot,
+            "pull_request_review_comment",
+            default_config,
+        )
+        assert result is None
+
+    def test_all_bot_usernames_blocked(self, default_config: ReviewConfig) -> None:
+        """All known bot usernames should be blocked by loop prevention."""
+        for bot_username in BOT_USERNAMES:
+            event = {
+                "action": "created",
+                "comment": {
+                    "id": 999,
+                    "user": {"login": bot_username},
+                    "body": "Some reply",
+                    "in_reply_to_id": 100,
+                },
+            }
+            result = should_run(event, "pull_request_review_comment", default_config)
+            assert result is None, f"Bot {bot_username} was not blocked"
+
+    def test_not_a_reply_skipped(
+        self,
+        review_comment_event_not_reply: dict[str, object],
+        default_config: ReviewConfig,
+    ) -> None:
+        result = should_run(
+            review_comment_event_not_reply,
+            "pull_request_review_comment",
+            default_config,
+        )
+        assert result is None
+
+    def test_wrong_action_skipped(self, default_config: ReviewConfig) -> None:
+        event = {
+            "action": "edited",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Edited text",
+                "in_reply_to_id": 100,
+            },
+        }
+        result = should_run(event, "pull_request_review_comment", default_config)
+        assert result is None
+
+    def test_missing_comment_payload_skipped(
+        self, default_config: ReviewConfig
+    ) -> None:
+        event = {"action": "created"}
+        result = should_run(event, "pull_request_review_comment", default_config)
+        assert result is None
+
+    def test_missing_user_info_skipped(self, default_config: ReviewConfig) -> None:
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "body": "Some reply",
+                "in_reply_to_id": 100,
+            },
+        }
+        result = should_run(event, "pull_request_review_comment", default_config)
+        assert result is None
+
+
+class TestIdentifyTargetAgent:
+    """Tests for _identify_target_agent()."""
+
+    def test_valid_reply_event(self, review_comment_event: dict[str, object]) -> None:
+        result = _identify_target_agent(review_comment_event)
+        assert result is not None
+        body, in_reply_to_id, comment_id = result
+        assert body == "Can you explain why this is an issue?"
+        assert in_reply_to_id == 100
+        assert comment_id == 200
+
+    def test_no_in_reply_to_id(
+        self, review_comment_event_not_reply: dict[str, object]
+    ) -> None:
+        result = _identify_target_agent(review_comment_event_not_reply)
+        assert result is None
+
+    def test_missing_comment(self) -> None:
+        result = _identify_target_agent({"action": "created"})
+        assert result is None
+
+    def test_empty_body(self) -> None:
+        event = {
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "",
+                "in_reply_to_id": 100,
+            }
+        }
+        result = _identify_target_agent(event)
+        assert result is None
+
+
+class TestFormatThreadContext:
+    """Tests for _format_thread_context()."""
+
+    def test_single_comment(self) -> None:
+        thread = [{"user": "claude-reviewer[bot]", "body": "Consider refactoring."}]
+        result = _format_thread_context(thread)
+        assert "claude-reviewer[bot]" in result
+        assert "Consider refactoring." in result
+
+    def test_multi_comment_thread(self) -> None:
+        thread = [
+            {"user": "claude-reviewer[bot]", "body": "Issue here."},
+            {"user": "developer", "body": "Can you explain?"},
+        ]
+        result = _format_thread_context(thread)
+        assert "claude-reviewer[bot]" in result
+        assert "developer" in result
+        assert "---" in result
+
+    def test_empty_thread(self) -> None:
+        result = _format_thread_context([])
+        assert result == ""
+
+
+class TestHandleConversationReply:
+    """Tests for _handle_conversation_reply()."""
+
+    @pytest.mark.asyncio()
+    async def test_successful_conversation_reply(self) -> None:
+        """Full conversation reply flow with mocked dependencies."""
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Why is this a problem?",
+                "in_reply_to_id": 100,
+            },
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get_review_comments = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "claude-reviewer[bot]",
+                    "body": "Potential null reference.",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": None,
+                },
+                {
+                    "id": 200,
+                    "user": "developer",
+                    "body": "Why is this a problem?",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": 100,
+                },
+            ]
+        )
+        mock_client.get_comment_thread = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "claude-reviewer[bot]",
+                    "body": "Potential null reference.",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": None,
+                },
+                {
+                    "id": 200,
+                    "user": "developer",
+                    "body": "Why is this a problem?",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": 100,
+                },
+            ]
+        )
+        mock_client.get_file_content = AsyncMock(return_value="def foo():\n    pass\n")
+        mock_client.post_reply_comment = AsyncMock()
+
+        mock_engine = AsyncMock()
+        mock_engine.__aenter__ = AsyncMock(return_value=mock_engine)
+        mock_engine.__aexit__ = AsyncMock(return_value=None)
+
+        mock_runner = AsyncMock()
+        mock_runner.run_conversation_reply = AsyncMock(
+            return_value="The variable could be None if the API call fails."
+        )
+
+        with (
+            patch(
+                "src.main._initialize_agents",
+                return_value=({"claude-reviewer": mock_client}, []),
+            ),
+            patch("src.main._initialize_single_agent", return_value=mock_client),
+            patch("src.main.EngineManager", return_value=mock_engine),
+            patch("src.main.PipelineRunner", return_value=mock_runner),
+        ):
+            await _handle_conversation_reply(event, "owner/repo", 42)
+
+        mock_client.post_reply_comment.assert_called_once()
+        call_args = mock_client.post_reply_comment.call_args
+        assert call_args.args[0] == 100  # in_reply_to_id
+        assert "None" in call_args.args[1]  # reply text
+
+    @pytest.mark.asyncio()
+    async def test_agent_not_available_graceful_failure(self) -> None:
+        """If no agents can be initialized, handle gracefully."""
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Why?",
+                "in_reply_to_id": 100,
+            },
+        }
+
+        with patch(
+            "src.main._initialize_agents",
+            return_value=({}, ["claude-reviewer", "gpt-reviewer", "gemini-reviewer"]),
+        ):
+            # Should not raise
+            await _handle_conversation_reply(event, "owner/repo", 42)
+
+    @pytest.mark.asyncio()
+    async def test_parent_not_from_bot_skips(self) -> None:
+        """If parent comment is not from a bot, skip."""
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Agree with you.",
+                "in_reply_to_id": 100,
+            },
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get_review_comments = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "another-developer",
+                    "body": "This looks wrong.",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": None,
+                },
+            ]
+        )
+        mock_client.get_comment_thread = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "another-developer",
+                    "body": "This looks wrong.",
+                    "path": "src/utils.py",
+                    "line": 11,
+                    "in_reply_to_id": None,
+                },
+            ]
+        )
+
+        with patch(
+            "src.main._initialize_agents",
+            return_value=({"claude-reviewer": mock_client}, []),
+        ):
+            # Should not raise, should just skip
+            await _handle_conversation_reply(event, "owner/repo", 42)
+
+        # No reply should be posted
+        mock_client.post_reply_comment.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_pipeline_error_propagates(self) -> None:
+        """PipelineError during conversation reply propagates up."""
+        from src.errors import PipelineError
+
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Why?",
+                "in_reply_to_id": 100,
+            },
+        }
+
+        mock_client = AsyncMock()
+        mock_client.get_review_comments = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "claude-reviewer[bot]",
+                    "body": "Issue.",
+                    "path": "src/main.py",
+                    "line": 5,
+                    "in_reply_to_id": None,
+                },
+            ]
+        )
+        mock_client.get_comment_thread = AsyncMock(
+            return_value=[
+                {
+                    "id": 100,
+                    "user": "claude-reviewer[bot]",
+                    "body": "Issue.",
+                    "path": "src/main.py",
+                    "line": 5,
+                    "in_reply_to_id": None,
+                },
+            ]
+        )
+        mock_client.get_file_content = AsyncMock(return_value="code")
+
+        mock_engine = AsyncMock()
+        mock_engine.__aenter__ = AsyncMock(return_value=mock_engine)
+        mock_engine.__aexit__ = AsyncMock(return_value=None)
+
+        mock_runner = AsyncMock()
+        mock_runner.run_conversation_reply = AsyncMock(
+            side_effect=PipelineError("Pipeline crashed")
+        )
+
+        with (
+            patch(
+                "src.main._initialize_agents",
+                return_value=({"claude-reviewer": mock_client}, []),
+            ),
+            patch("src.main._initialize_single_agent", return_value=mock_client),
+            patch("src.main.EngineManager", return_value=mock_engine),
+            patch("src.main.PipelineRunner", return_value=mock_runner),
+            pytest.raises(PipelineError, match="Pipeline crashed"),
+        ):
+            await _handle_conversation_reply(event, "owner/repo", 42)
 
 
 class TestExtractChangedFiles:
@@ -407,6 +831,38 @@ class TestRunOrchestration:
         mock_client.post_issue_comment.assert_called_once()
         call_args = mock_client.post_issue_comment.call_args
         assert "too large" in call_args.args[0]
+
+    @pytest.mark.asyncio()
+    async def test_conversation_event_routes_correctly(self, tmp_path: Path) -> None:
+        """A pull_request_review_comment event routes to conversation handler."""
+        event = {
+            "action": "created",
+            "comment": {
+                "id": 200,
+                "user": {"login": "developer"},
+                "body": "Why?",
+                "in_reply_to_id": 100,
+            },
+            "pull_request": {"number": 42},
+            "repository": {"full_name": "owner/repo"},
+        }
+        event_file = tmp_path / "event.json"
+        event_file.write_text(json.dumps(event))
+
+        env = {
+            "GITHUB_EVENT_PATH": str(event_file),
+            "GITHUB_EVENT_NAME": "pull_request_review_comment",
+            "GITHUB_WORKSPACE": str(tmp_path),
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("src.main._handle_conversation_reply") as mock_handler,
+        ):
+            mock_handler.return_value = None
+            await run()
+
+        mock_handler.assert_called_once()
 
 
 class TestAgentFailureIsolation:

@@ -147,6 +147,94 @@ class GitHubClient:
             msg = f"Failed to submit review with status {status}: {e}"
             raise ReviewSubmissionError(msg) from e
 
+    async def get_review_comments(self) -> list[dict[str, object]]:
+        """Fetch all review comments on the pull request.
+
+        Returns:
+            List of comment dicts with ``id``, ``user``, ``body``,
+            ``path``, ``line``, and ``in_reply_to_id`` fields.
+        """
+        comments: list[dict[str, object]] = []
+        for comment in self._pr.get_review_comments():
+            comments.append(
+                {
+                    "id": comment.id,
+                    "user": comment.user.login,
+                    "body": comment.body,
+                    "path": getattr(comment, "path", ""),
+                    "line": getattr(comment, "line", 0),
+                    "in_reply_to_id": getattr(comment, "in_reply_to_id", None),
+                }
+            )
+        return comments
+
+    async def get_comment_thread(self, comment_id: int) -> list[dict[str, object]]:
+        """Fetch the comment thread for a given review comment.
+
+        Retrieves the parent comment and all replies in the same thread.
+
+        Args:
+            comment_id: The ID of a comment in the thread.
+
+        Returns:
+            Ordered list of comment dicts forming the thread.
+        """
+        all_comments = await self.get_review_comments()
+
+        # Find the root comment (the one without in_reply_to_id, or the
+        # target of in_reply_to_id chains)
+        comment_map: dict[int, dict[str, object]] = {
+            int(c["id"]): c for c in all_comments  # type: ignore[arg-type]
+        }
+
+        # Find the root of the thread containing comment_id
+        target = comment_map.get(comment_id)
+        if target is None:
+            return []
+
+        # Walk up to find the root
+        root_id = comment_id
+        visited: set[int] = set()
+        while True:
+            current = comment_map.get(root_id)
+            if current is None:
+                break
+            parent_id = current.get("in_reply_to_id")
+            if parent_id is None or int(parent_id) not in comment_map:  # type: ignore[arg-type]
+                break
+            if root_id in visited:
+                break
+            visited.add(root_id)
+            root_id = int(parent_id)  # type: ignore[arg-type]
+
+        # Collect all comments in this thread (root + replies to root)
+        thread: list[dict[str, object]] = []
+        if root_id in comment_map:
+            thread.append(comment_map[root_id])
+        for c in all_comments:
+            reply_to = c.get("in_reply_to_id")
+            c_id = int(c["id"])  # type: ignore[arg-type]
+            if reply_to is not None and int(reply_to) == root_id and c_id != root_id:  # type: ignore[arg-type]
+                thread.append(c)
+
+        return thread
+
+    async def post_reply_comment(self, comment_id: int, body: str) -> None:
+        """Post a reply to an existing review comment thread.
+
+        Args:
+            comment_id: The ID of the comment to reply to.
+            body: Reply body text.
+
+        Raises:
+            CommentPostingError: If the reply cannot be posted.
+        """
+        try:
+            self._pr.create_review_comment_reply(comment_id, body)
+        except Exception as e:
+            msg = f"Failed to post reply to comment {comment_id}: {e}"
+            raise CommentPostingError(msg) from e
+
     async def post_issue_comment(self, body: str) -> None:
         """Post a general comment on the PR (for summaries/errors).
 

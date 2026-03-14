@@ -145,9 +145,84 @@ class PipelineRunner:
         self,
         agent_node_id: str,
         thread_context: str,
-    ) -> dict[str, object]:
+        file_context: str = "",
+    ) -> str:
         """Run the single-agent conversation reply pipeline.
 
-        Not implemented in Phase 1.
+        Loads the ``conversation_reply.json`` pipeline, sends thread
+        context and optional file context, and returns the agent's reply.
+
+        Args:
+            agent_node_id: The RocketRide node ID of the responding agent
+                (e.g., ``"claude-reviewer"``).
+            thread_context: Formatted conversation thread text.
+            file_context: Optional surrounding code context.
+
+        Returns:
+            The reply text from the agent.
+
+        Raises:
+            PipelineError: If the pipeline file is missing or execution
+                fails.
         """
-        raise NotImplementedError("Conversation reply is deferred to Phase 3")
+        pipeline_path = self._pipeline_dir / "conversation_reply.json"
+        if not pipeline_path.is_file():
+            msg = f"Pipeline file not found: {pipeline_path}"
+            raise PipelineError(msg)
+
+        pipeline_def = pipeline_path.read_text(encoding="utf-8")
+
+        input_data: dict[str, str] = {
+            "thread_context": thread_context,
+            "agent_node_id": agent_node_id,
+        }
+        if file_context:
+            input_data["file_context"] = file_context
+
+        token = None
+        try:
+            async with RocketRideClient(f"http://localhost:{ENGINE_PORT}") as client:
+                token = await client.use(json.loads(pipeline_def))
+                response = await client.send(token, input_data)
+        except PipelineError:
+            raise
+        except Exception as e:
+            msg = f"Conversation reply pipeline failed: {e}"
+            raise PipelineError(msg) from e
+        finally:
+            if token is not None:
+                try:
+                    async with RocketRideClient(
+                        f"http://localhost:{ENGINE_PORT}"
+                    ) as client:
+                        await client.terminate(token)
+                except Exception:
+                    logger.warning("Failed to terminate conversation pipeline token")
+
+        return self._extract_reply(response)
+
+    def _extract_reply(self, response: object) -> str:
+        """Extract the reply text from a conversation pipeline response.
+
+        Args:
+            response: Raw response from the RocketRide SDK.
+
+        Returns:
+            The reply string.
+
+        Raises:
+            PipelineError: If the response structure is unexpected or
+                the reply field is missing.
+        """
+        if not isinstance(response, dict):
+            msg = (
+                f"Unexpected conversation response type: " f"{type(response).__name__}"
+            )
+            raise PipelineError(msg)
+
+        reply = response.get("reply")
+        if not isinstance(reply, str) or not reply.strip():
+            msg = "Conversation response missing 'reply' field or reply is empty"
+            raise PipelineError(msg)
+
+        return reply.strip()

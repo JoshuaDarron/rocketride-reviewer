@@ -1,0 +1,38 @@
+{
+  "name": "conversation-reply",
+  "description": "Single-agent scoped reply to a developer comment in a review thread.",
+  "nodes": [
+    {
+      "id": "conversation-responder",
+      "type": "llm",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "system_prompt": "You are a code review assistant responding to a developer's reply in a pull request review thread. Your role is to engage constructively with the developer's question, concern, or pushback about a previous review comment. Reference the specific code under discussion. Be concise, helpful, and technically precise. If the developer's point is valid, acknowledge it. If there is still a concern, explain clearly why. Do not repeat the full original review comment. Focus your response on what the developer asked or said.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "thread_context": {
+            "type": "string",
+            "description": "The full comment thread including the original review comment and all replies, formatted as a conversation."
+          },
+          "file_context": {
+            "type": "string",
+            "description": "The surrounding code context from the file being discussed."
+          }
+        },
+        "required": ["thread_context"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "reply": {
+            "type": "string",
+            "description": "The response text to post as a reply in the review thread."
+          }
+        },
+        "required": ["reply"]
+      }
+    }
+  ],
+  "edges": []
+}
