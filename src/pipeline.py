@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 from rocketride import RocketRideClient
@@ -18,6 +20,7 @@ from src.config import (
     ENGINE_PORT,
     FULL_REVIEW_PIPELINE_FILE,
     LANE_TO_REVIEWER,
+    LLM_PROVIDER_API_KEY_ENV,
 )
 from src.errors import PipelineError
 from src.models import AgentReview
@@ -37,6 +40,50 @@ class PipelineRunner:
         if pipeline_dir is None:
             pipeline_dir = Path(__file__).resolve().parent.parent / "pipelines"
         self._pipeline_dir = pipeline_dir
+
+    @staticmethod
+    def _inject_api_keys(pipeline: dict[str, Any]) -> dict[str, Any]:
+        """Replace ``REPLACE_ME`` API key placeholders with real values.
+
+        Iterates over the pipeline's ``components`` list and, for each LLM
+        component whose ``provider`` is in ``LLM_PROVIDER_API_KEY_ENV``,
+        replaces any ``"apikey": "REPLACE_ME"`` value with the corresponding
+        environment variable.
+
+        Args:
+            pipeline: Parsed pipeline definition dict (mutated in place).
+
+        Returns:
+            The same pipeline dict, with API keys injected.
+
+        Raises:
+            PipelineError: If a required API key environment variable is
+                not set.
+        """
+        for component in pipeline.get("components", []):
+            provider = component.get("provider", "")
+            env_var = LLM_PROVIDER_API_KEY_ENV.get(provider)
+            if env_var is None:
+                continue
+
+            config = component.get("config", {})
+            profile = config.get("profile", "")
+            profile_config = config.get(profile, {})
+
+            if profile_config.get("apikey") != "REPLACE_ME":
+                continue
+
+            api_key = os.environ.get(env_var)
+            if not api_key:
+                msg = (
+                    f"Environment variable {env_var} is required for "
+                    f"provider {provider} but is not set"
+                )
+                raise PipelineError(msg)
+
+            profile_config["apikey"] = api_key
+
+        return pipeline
 
     async def run_full_review(
         self,
@@ -63,7 +110,8 @@ class PipelineRunner:
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)
 
-        pipeline_def = pipeline_path.read_text(encoding="utf-8")
+        pipeline_data = json.loads(pipeline_path.read_text(encoding="utf-8"))
+        self._inject_api_keys(pipeline_data)
 
         input_data: dict[str, object] = {
             "diff": diff,
@@ -75,7 +123,7 @@ class PipelineRunner:
         token = None
         try:
             async with RocketRideClient(f"http://localhost:{ENGINE_PORT}") as client:
-                token = await client.use(json.loads(pipeline_def))
+                token = await client.use(pipeline_data)
                 response = await client.send(token, input_data)
         except PipelineError:
             raise
@@ -242,7 +290,8 @@ class PipelineRunner:
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)
 
-        pipeline_def = pipeline_path.read_text(encoding="utf-8")
+        pipeline_data = json.loads(pipeline_path.read_text(encoding="utf-8"))
+        self._inject_api_keys(pipeline_data)
 
         input_data: dict[str, str] = {
             "thread_context": thread_context,
@@ -254,7 +303,7 @@ class PipelineRunner:
         token = None
         try:
             async with RocketRideClient(f"http://localhost:{ENGINE_PORT}") as client:
-                token = await client.use(json.loads(pipeline_def))
+                token = await client.use(pipeline_data)
                 response = await client.send(token, input_data)
         except PipelineError:
             raise

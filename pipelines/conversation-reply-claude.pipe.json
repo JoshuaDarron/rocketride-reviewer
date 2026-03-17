@@ -1,8 +1,8 @@
 {
   "viewport": {
-    "x": 97.08731385758324,
-    "y": 52.754407476467065,
-    "zoom": 0.757858283255199
+    "x": -241.29496659791994,
+    "y": -94.80314810036481,
+    "zoom": 1
   },
   "name": "conversation-reply",
   "description": "Single-agent scoped reply to a developer comment in a review thread.",
@@ -68,7 +68,12 @@
       "provider": "llm_anthropic",
       "config": {
         "profile": "claude-sonnet-4-6",
-        "claude-sonnet-4-6": {}
+        "claude-sonnet-4-6": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -84,7 +89,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -527,3 +528,196 @@ class TestLaneResponseParsing:
 
         assert len(reviews) == 0
         assert "claude-reviewer" in failures
+
+
+def _make_pipeline_with_llm(provider: str, profile: str) -> dict[str, object]:
+    """Create a minimal pipeline dict with one LLM component."""
+    return {
+        "name": "test",
+        "components": [
+            {
+                "id": f"{provider}_1",
+                "provider": provider,
+                "config": {
+                    "profile": profile,
+                    profile: {"apikey": "REPLACE_ME"},
+                },
+            }
+        ],
+    }
+
+
+class TestInjectApiKeys:
+    """Tests for _inject_api_keys API key injection."""
+
+    def test_injects_anthropic_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("INPUT_ANTHROPIC_API_KEY", "sk-ant-secret")
+        pipeline = _make_pipeline_with_llm("llm_anthropic", "claude-sonnet-4-6")
+
+        PipelineRunner._inject_api_keys(pipeline)
+
+        apikey = pipeline["components"][0]["config"]["claude-sonnet-4-6"]["apikey"]
+        assert apikey == "sk-ant-secret"
+
+    def test_injects_openai_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("INPUT_OPENAI_API_KEY", "sk-openai-secret")
+        pipeline = _make_pipeline_with_llm("llm_openai", "openai-5-2")
+
+        PipelineRunner._inject_api_keys(pipeline)
+
+        apikey = pipeline["components"][0]["config"]["openai-5-2"]["apikey"]
+        assert apikey == "sk-openai-secret"
+
+    def test_injects_gemini_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("INPUT_GOOGLE_API_KEY", "google-secret")
+        pipeline = _make_pipeline_with_llm("llm_gemini", "gemini-3-pro")
+
+        PipelineRunner._inject_api_keys(pipeline)
+
+        apikey = pipeline["components"][0]["config"]["gemini-3-pro"]["apikey"]
+        assert apikey == "google-secret"
+
+    def test_missing_env_var_raises_pipeline_error(self) -> None:
+        pipeline = _make_pipeline_with_llm("llm_anthropic", "claude-sonnet-4-6")
+
+        with pytest.raises(PipelineError, match="INPUT_ANTHROPIC_API_KEY"):
+            PipelineRunner._inject_api_keys(pipeline)
+
+    def test_skips_non_llm_components(self) -> None:
+        pipeline = {
+            "name": "test",
+            "components": [
+                {"id": "webhook_1", "provider": "webhook", "config": {}},
+                {"id": "question_1", "provider": "question", "config": {}},
+            ],
+        }
+        # Should not raise
+        PipelineRunner._inject_api_keys(pipeline)
+
+    def test_skips_already_set_keys(self) -> None:
+        """Components with apikey != REPLACE_ME are left unchanged."""
+        pipeline = {
+            "name": "test",
+            "components": [
+                {
+                    "id": "llm_anthropic_1",
+                    "provider": "llm_anthropic",
+                    "config": {
+                        "profile": "claude-sonnet-4-6",
+                        "claude-sonnet-4-6": {"apikey": "already-set"},
+                    },
+                }
+            ],
+        }
+        PipelineRunner._inject_api_keys(pipeline)
+
+        apikey = pipeline["components"][0]["config"]["claude-sonnet-4-6"]["apikey"]
+        assert apikey == "already-set"
+
+    def test_injects_all_three_in_full_review(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All three providers get keys injected in a full-review pipeline."""
+        monkeypatch.setenv("INPUT_ANTHROPIC_API_KEY", "ant-key")
+        monkeypatch.setenv("INPUT_OPENAI_API_KEY", "oai-key")
+        monkeypatch.setenv("INPUT_GOOGLE_API_KEY", "goog-key")
+
+        pipeline = {
+            "name": "full-review",
+            "components": [
+                {
+                    "id": "llm_anthropic_1",
+                    "provider": "llm_anthropic",
+                    "config": {
+                        "profile": "claude-sonnet-4-6",
+                        "claude-sonnet-4-6": {"apikey": "REPLACE_ME"},
+                    },
+                },
+                {
+                    "id": "llm_openai_1",
+                    "provider": "llm_openai",
+                    "config": {
+                        "profile": "openai-5-2",
+                        "openai-5-2": {"apikey": "REPLACE_ME"},
+                    },
+                },
+                {
+                    "id": "llm_gemini_1",
+                    "provider": "llm_gemini",
+                    "config": {
+                        "profile": "gemini-3-pro",
+                        "gemini-3-pro": {"apikey": "REPLACE_ME"},
+                    },
+                },
+            ],
+        }
+
+        PipelineRunner._inject_api_keys(pipeline)
+
+        assert (
+            pipeline["components"][0]["config"]["claude-sonnet-4-6"]["apikey"]
+            == "ant-key"
+        )
+        assert pipeline["components"][1]["config"]["openai-5-2"]["apikey"] == "oai-key"
+        assert (
+            pipeline["components"][2]["config"]["gemini-3-pro"]["apikey"] == "goog-key"
+        )
+
+    def test_no_components_key_is_safe(self) -> None:
+        """Pipeline without components key does not raise."""
+        pipeline: dict[str, object] = {"name": "empty"}
+        PipelineRunner._inject_api_keys(pipeline)
+
+    @pytest.mark.asyncio()
+    async def test_keys_injected_during_full_review(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """API keys are injected into the pipeline dict sent to the SDK."""
+        monkeypatch.setenv("INPUT_ANTHROPIC_API_KEY", "ant-key")
+
+        pipeline_content = _make_pipeline_with_llm("llm_anthropic", "claude-sonnet-4-6")
+        pipeline_file = tmp_path / "full-review.pipe.json"
+        pipeline_file.write_text(json.dumps(pipeline_content), encoding="utf-8")
+
+        runner = PipelineRunner(pipeline_dir=tmp_path)
+        response = {"reviewer": "claude-reviewer", "comments": []}
+        mock_client = _make_mock_client(response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            await runner.run_full_review(diff="diff content")
+
+        # Verify the pipeline dict passed to client.use() has the key injected
+        used_pipeline = mock_client.use.call_args.args[0]
+        apikey = used_pipeline["components"][0]["config"]["claude-sonnet-4-6"]["apikey"]
+        assert apikey == "ant-key"
+
+    @pytest.mark.asyncio()
+    async def test_keys_injected_during_conversation_reply(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """API keys are injected into conversation reply pipelines."""
+        monkeypatch.setenv("INPUT_ANTHROPIC_API_KEY", "ant-key")
+
+        pipeline_content = _make_pipeline_with_llm("llm_anthropic", "claude-sonnet-4-6")
+        for filename in (
+            "conversation-reply-claude.pipe.json",
+            "conversation-reply-openai.pipe.json",
+            "conversation-reply-gemini.pipe.json",
+        ):
+            (tmp_path / filename).write_text(
+                json.dumps(pipeline_content), encoding="utf-8"
+            )
+
+        runner = PipelineRunner(pipeline_dir=tmp_path)
+        response = {"reply": "Here is my response."}
+        mock_client = _make_mock_client(response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            await runner.run_conversation_reply(
+                agent_node_id="claude-reviewer",
+                thread_context="context",
+            )
+
+        used_pipeline = mock_client.use.call_args.args[0]
+        apikey = used_pipeline["components"][0]["config"]["claude-sonnet-4-6"]["apikey"]
+        assert apikey == "ant-key"

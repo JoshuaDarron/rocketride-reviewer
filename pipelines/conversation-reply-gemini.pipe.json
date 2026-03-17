@@ -1,7 +1,7 @@
 {
   "viewport": {
-    "x": -174,
-    "y": -123,
+    "x": -479,
+    "y": -147,
     "zoom": 1
   },
   "name": "conversation-reply",
@@ -68,7 +68,12 @@
       "provider": "llm_gemini",
       "config": {
         "profile": "gemini-3-pro",
-        "gemini-3-pro": {}
+        "gemini-3-pro": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -84,7 +89,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {

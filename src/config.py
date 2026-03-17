@@ -90,6 +90,13 @@ ENGINE_PORT: int = 5565
 MAX_RETRIES: int = 3
 RETRY_BACKOFF_BASE: float = 1.0
 
+# Maps LLM provider names (as used in pipeline JSON) to env var names for API keys
+LLM_PROVIDER_API_KEY_ENV: dict[str, str] = {
+    "llm_anthropic": "INPUT_ANTHROPIC_API_KEY",
+    "llm_openai": "INPUT_OPENAI_API_KEY",
+    "llm_gemini": "INPUT_GOOGLE_API_KEY",
+}
+
 # Agent credentials: maps agent name to env var names for authentication
 AGENT_CREDENTIALS: list[dict[str, str]] = [
     {

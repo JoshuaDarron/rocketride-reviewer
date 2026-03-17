@@ -68,7 +68,12 @@
       "provider": "llm_openai",
       "config": {
         "profile": "openai-5-2",
-        "openai-5-2": {}
+        "openai-5-2": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -84,7 +89,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {

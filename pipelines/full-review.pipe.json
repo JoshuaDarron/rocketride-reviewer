@@ -1,7 +1,7 @@
 {
   "viewport": {
-    "x": -25.36858473605639,
-    "y": 67.8798697126665,
+    "x": -142.3685847360564,
+    "y": -35.120130287333495,
     "zoom": 0.757858283255199
   },
   "name": "full-review",
@@ -68,7 +68,12 @@
       "provider": "llm_gemini",
       "config": {
         "profile": "gemini-3-pro",
-        "gemini-3-pro": {}
+        "gemini-3-pro": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -84,7 +89,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {
@@ -98,7 +103,12 @@
       "provider": "llm_anthropic",
       "config": {
         "profile": "claude-sonnet-4-6",
-        "claude-sonnet-4-6": {}
+        "claude-sonnet-4-6": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -114,7 +124,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {
@@ -128,7 +138,12 @@
       "provider": "llm_openai",
       "config": {
         "profile": "openai-5-2",
-        "openai-5-2": {}
+        "openai-5-2": {
+          "apikey": "REPLACE_ME"
+        },
+        "parameters": {
+          "google": {}
+        }
       },
       "ui": {
         "position": {
@@ -144,7 +159,7 @@
           "class": "llm",
           "type": "default"
         },
-        "formDataValid": false
+        "formDataValid": true
       },
       "input": [
         {
