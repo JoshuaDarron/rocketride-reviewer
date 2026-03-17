@@ -191,9 +191,7 @@ class GitHubClient:
 
         # Find the root comment (the one without in_reply_to_id, or the
         # target of in_reply_to_id chains)
-        comment_map: dict[int, dict[str, Any]] = {
-            int(c["id"]): c for c in all_comments
-        }
+        comment_map: dict[int, dict[str, Any]] = {int(c["id"]): c for c in all_comments}
 
         # Find the root of the thread containing comment_id
         target = comment_map.get(comment_id)
