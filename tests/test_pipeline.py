@@ -15,7 +15,7 @@ from src.pipeline import PipelineRunner
 @pytest.fixture()
 def pipeline_dir(tmp_path: Path) -> Path:
     """Create a temporary pipeline directory with a valid pipeline file."""
-    pipeline_file = tmp_path / "full_review.pipe.json"
+    pipeline_file = tmp_path / "full-review.pipe.json"
     pipeline_file.write_text(
         '{"name": "test", "nodes": [], "edges": []}',
         encoding="utf-8",
@@ -25,17 +25,22 @@ def pipeline_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def conversation_pipeline_dir(tmp_path: Path) -> Path:
-    """Create a temporary pipeline directory with both pipeline files."""
-    full_file = tmp_path / "full_review.pipe.json"
+    """Create a temporary pipeline directory with all pipeline files."""
+    full_file = tmp_path / "full-review.pipe.json"
     full_file.write_text(
         '{"name": "test", "nodes": [], "edges": []}',
         encoding="utf-8",
     )
-    conv_file = tmp_path / "conversation_reply.pipe.json"
-    conv_file.write_text(
-        '{"name": "conversation-reply", "nodes": [], "edges": []}',
-        encoding="utf-8",
-    )
+    for filename in (
+        "conversation-reply-claude.pipe.json",
+        "conversation-reply-openai.pipe.json",
+        "conversation-reply-gemini.pipe.json",
+    ):
+        conv_file = tmp_path / filename
+        conv_file.write_text(
+            '{"name": "conversation-reply", "nodes": [], "edges": []}',
+            encoding="utf-8",
+        )
     return tmp_path
 
 
@@ -86,6 +91,36 @@ def valid_three_agent_response() -> list[dict[str, object]]:
             ],
         },
     ]
+
+
+@pytest.fixture()
+def valid_lane_response() -> dict[str, object]:
+    """A valid named-lane response dict (no reviewer keys in lane data)."""
+    return {
+        "claude": {
+            "comments": [
+                {
+                    "file": "src/main.py",
+                    "line": 10,
+                    "severity": "medium",
+                    "body": "Consider error handling here.",
+                }
+            ],
+        },
+        "openai": {
+            "comments": [],
+        },
+        "gemini": {
+            "comments": [
+                {
+                    "file": "src/utils.py",
+                    "line": 5,
+                    "severity": "low",
+                    "body": "Naming suggestion.",
+                }
+            ],
+        },
+    }
 
 
 def _make_mock_client(response: object) -> AsyncMock:
@@ -299,9 +334,9 @@ class TestConversationReplyPipeline:
 
     @pytest.mark.asyncio()
     async def test_conversation_reply_pipeline_missing(self, tmp_path: Path) -> None:
-        """Missing conversation_reply.pipe.json raises PipelineError."""
-        # Only create full_review.pipe.json, not conversation_reply.pipe.json
-        full_file = tmp_path / "full_review.pipe.json"
+        """Missing per-agent pipeline file raises PipelineError."""
+        # Only create full-review.pipe.json, not per-agent conversation files
+        full_file = tmp_path / "full-review.pipe.json"
         full_file.write_text('{"name": "test"}', encoding="utf-8")
 
         runner = PipelineRunner(pipeline_dir=tmp_path)
@@ -309,6 +344,17 @@ class TestConversationReplyPipeline:
         with pytest.raises(PipelineError, match="Pipeline file not found"):
             await runner.run_conversation_reply(
                 agent_node_id="claude-reviewer",
+                thread_context="some context",
+            )
+
+    @pytest.mark.asyncio()
+    async def test_conversation_reply_unknown_agent(self, tmp_path: Path) -> None:
+        """Unknown agent_node_id raises PipelineError."""
+        runner = PipelineRunner(pipeline_dir=tmp_path)
+
+        with pytest.raises(PipelineError, match="Unknown agent node ID"):
+            await runner.run_conversation_reply(
+                agent_node_id="nonexistent-agent",
                 thread_context="some context",
             )
 
@@ -403,3 +449,81 @@ class TestConversationReplyPipeline:
             )
 
         mock_client.terminate.assert_called_once_with("token-123")
+
+
+class TestLaneResponseParsing:
+    """Tests for named-lane response format parsing."""
+
+    @pytest.mark.asyncio()
+    async def test_lane_response_parsed_correctly(
+        self,
+        pipeline_dir: Path,
+        valid_lane_response: dict[str, object],
+    ) -> None:
+        """Named-lane response produces correct AgentReview objects."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+        mock_client = _make_mock_client(valid_lane_response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            reviews, failures = await runner.run_full_review(diff="diff content")
+
+        assert len(reviews) == 3
+        assert failures == []
+        reviewer_names = {r.reviewer for r in reviews}
+        assert reviewer_names == {"claude-reviewer", "gpt-reviewer", "gemini-reviewer"}
+
+    @pytest.mark.asyncio()
+    async def test_lane_response_injects_reviewer_name(
+        self,
+        pipeline_dir: Path,
+    ) -> None:
+        """Reviewer name is injected from LANE_TO_REVIEWER mapping."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+        lane_response = {
+            "openai": {"comments": []},
+        }
+        mock_client = _make_mock_client(lane_response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            reviews, failures = await runner.run_full_review(diff="diff content")
+
+        assert len(reviews) == 1
+        assert reviews[0].reviewer == "gpt-reviewer"
+
+    @pytest.mark.asyncio()
+    async def test_malformed_lane_data_skipped(
+        self,
+        pipeline_dir: Path,
+    ) -> None:
+        """Malformed data in a lane is skipped, not raised."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+        lane_response = {
+            "claude": {"comments": []},
+            "openai": "not a dict",
+            "gemini": {"comments": []},
+        }
+        mock_client = _make_mock_client(lane_response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            reviews, failures = await runner.run_full_review(diff="diff content")
+
+        assert len(reviews) == 2
+        assert "gpt-reviewer" in failures
+
+    @pytest.mark.asyncio()
+    async def test_lane_with_invalid_comments_skipped(
+        self,
+        pipeline_dir: Path,
+    ) -> None:
+        """Lane with invalid comments field is skipped."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+        lane_response = {
+            "claude": {"comments": "not a list"},
+        }
+        mock_client = _make_mock_client(lane_response)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            reviews, failures = await runner.run_full_review(diff="diff content")
+
+        assert len(reviews) == 0
+        assert "claude-reviewer" in failures

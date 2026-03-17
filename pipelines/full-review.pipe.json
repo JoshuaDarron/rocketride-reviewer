@@ -1,0 +1,253 @@
+{
+  "viewport": {
+    "x": -25.36858473605639,
+    "y": 67.8798697126665,
+    "zoom": 0.757858283255199
+  },
+  "name": "full-review",
+  "description": "Three parallel AI reviewers (Claude, GPT, Gemini). Deduplication handled in Python post-processing.",
+  "components": [
+    {
+      "id": "webhook_1",
+      "provider": "webhook",
+      "config": {
+        "hideForm": true,
+        "mode": "Source",
+        "parameters": {},
+        "type": "webhook"
+      },
+      "ui": {
+        "position": {
+          "x": 140,
+          "y": 360
+        },
+        "measured": {
+          "width": 160,
+          "height": 135
+        },
+        "data": {
+          "provider": "webhook",
+          "class": "source",
+          "type": "default"
+        },
+        "formDataValid": true
+      }
+    },
+    {
+      "id": "question_1",
+      "provider": "question",
+      "config": {
+        "profile": "default",
+        "default": {}
+      },
+      "ui": {
+        "position": {
+          "x": 400,
+          "y": 420
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "question",
+          "class": "text",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "text",
+          "from": "webhook_1"
+        }
+      ]
+    },
+    {
+      "id": "llm_gemini_1",
+      "provider": "llm_gemini",
+      "config": {
+        "profile": "gemini-3-pro",
+        "gemini-3-pro": {}
+      },
+      "ui": {
+        "position": {
+          "x": 680,
+          "y": 560
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "llm_gemini",
+          "class": "llm",
+          "type": "default"
+        },
+        "formDataValid": false
+      },
+      "input": [
+        {
+          "lane": "questions",
+          "from": "question_1"
+        }
+      ]
+    },
+    {
+      "id": "llm_anthropic_1",
+      "provider": "llm_anthropic",
+      "config": {
+        "profile": "claude-sonnet-4-6",
+        "claude-sonnet-4-6": {}
+      },
+      "ui": {
+        "position": {
+          "x": 680,
+          "y": 280
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "llm_anthropic",
+          "class": "llm",
+          "type": "default"
+        },
+        "formDataValid": false
+      },
+      "input": [
+        {
+          "lane": "questions",
+          "from": "question_1"
+        }
+      ]
+    },
+    {
+      "id": "llm_openai_1",
+      "provider": "llm_openai",
+      "config": {
+        "profile": "openai-5-2",
+        "openai-5-2": {}
+      },
+      "ui": {
+        "position": {
+          "x": 680,
+          "y": 420
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "llm_openai",
+          "class": "llm",
+          "type": "default"
+        },
+        "formDataValid": false
+      },
+      "input": [
+        {
+          "lane": "questions",
+          "from": "question_1"
+        }
+      ]
+    },
+    {
+      "id": "response_answers_1",
+      "provider": "response_answers",
+      "config": {
+        "laneName": "claude",
+        "parameters": {
+          "google": {}
+        }
+      },
+      "ui": {
+        "position": {
+          "x": 940,
+          "y": 280
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "response_answers",
+          "class": "infrastructure",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "answers",
+          "from": "llm_anthropic_1"
+        }
+      ]
+    },
+    {
+      "id": "response_answers_2",
+      "provider": "response_answers",
+      "config": {
+        "laneName": "openai",
+        "parameters": {
+          "google": {}
+        }
+      },
+      "ui": {
+        "position": {
+          "x": 940,
+          "y": 420
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "response_answers",
+          "class": "infrastructure",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "answers",
+          "from": "llm_openai_1"
+        }
+      ]
+    },
+    {
+      "id": "response_answers_3",
+      "provider": "response_answers",
+      "config": {
+        "laneName": "gemini",
+        "parameters": {
+          "google": {}
+        }
+      },
+      "ui": {
+        "position": {
+          "x": 940,
+          "y": 560
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "response_answers",
+          "class": "infrastructure",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "answers",
+          "from": "llm_gemini_1"
+        }
+      ]
+    }
+  ]
+}

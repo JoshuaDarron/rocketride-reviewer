@@ -8,7 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import AGENT_ROUTING, BOT_USERNAMES, MODELS, load_config
+from src.config import (
+    AGENT_ROUTING,
+    BOT_USERNAMES,
+    CONVERSATION_PIPELINE_FILES,
+    LANE_TO_REVIEWER,
+    MODELS,
+    load_config,
+)
 from src.errors import ConfigurationError
 
 
@@ -33,6 +40,33 @@ class TestConstants:
     def test_routing_values_match_model_keys(self) -> None:
         for node_id in AGENT_ROUTING.values():
             assert node_id in MODELS
+
+    def test_models_use_updated_model_names(self) -> None:
+        assert MODELS["claude-reviewer"] == "claude-sonnet-4-6"
+        assert MODELS["gpt-reviewer"] == "openai-5-2"
+        assert MODELS["gemini-reviewer"] == "gemini-3-pro"
+        assert MODELS["aggregator"] == "claude-sonnet-4-6"
+
+    def test_conversation_pipeline_files_covers_all_agents(self) -> None:
+        for node_id in AGENT_ROUTING.values():
+            assert node_id in CONVERSATION_PIPELINE_FILES
+
+    def test_conversation_pipeline_files_values(self) -> None:
+        expected = {
+            "claude-reviewer": "conversation-reply-claude.pipe.json",
+            "gpt-reviewer": "conversation-reply-openai.pipe.json",
+            "gemini-reviewer": "conversation-reply-gemini.pipe.json",
+        }
+        for agent, filename in expected.items():
+            assert CONVERSATION_PIPELINE_FILES[agent] == filename
+
+    def test_lane_to_reviewer_keys(self) -> None:
+        assert set(LANE_TO_REVIEWER.keys()) == {"claude", "openai", "gemini"}
+
+    def test_lane_to_reviewer_values(self) -> None:
+        assert LANE_TO_REVIEWER["claude"] == "claude-reviewer"
+        assert LANE_TO_REVIEWER["openai"] == "gpt-reviewer"
+        assert LANE_TO_REVIEWER["gemini"] == "gemini-reviewer"
 
 
 class TestLoadConfig:

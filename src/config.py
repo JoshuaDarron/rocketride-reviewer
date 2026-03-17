@@ -22,10 +22,27 @@ logger = logging.getLogger(__name__)
 
 # Model identifiers (not user-configurable in v1)
 MODELS: dict[str, str] = {
-    "claude-reviewer": "claude-sonnet-4-20250514",
-    "gpt-reviewer": "gpt-4o",
-    "gemini-reviewer": "gemini-2.0-flash",
-    "aggregator": "claude-sonnet-4-20250514",
+    "claude-reviewer": "claude-sonnet-4-6",
+    "gpt-reviewer": "openai-5-2",
+    "gemini-reviewer": "gemini-3-pro",
+    "aggregator": "claude-sonnet-4-6",
+}
+
+# Pipeline file paths
+FULL_REVIEW_PIPELINE_FILE: str = "full-review.pipe.json"
+
+# Maps agent node IDs to per-agent conversation reply pipeline filenames
+CONVERSATION_PIPELINE_FILES: dict[str, str] = {
+    "claude-reviewer": "conversation-reply-claude.pipe.json",
+    "gpt-reviewer": "conversation-reply-openai.pipe.json",
+    "gemini-reviewer": "conversation-reply-gemini.pipe.json",
+}
+
+# Maps response lane names to reviewer node IDs
+LANE_TO_REVIEWER: dict[str, str] = {
+    "claude": "claude-reviewer",
+    "openai": "gpt-reviewer",
+    "gemini": "gemini-reviewer",
 }
 
 # Maps GitHub App bot username to RocketRide pipeline node ID

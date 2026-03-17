@@ -19,8 +19,10 @@ rocketride-reviewer/
 │   ├── PLANNING.md                 # Implementation plan and task breakdown
 │   └── SETUP.md                    # GitHub App setup guide for users
 ├── pipelines/
-│   ├── full_review.pipe.json            # RocketRide pipeline: 3-agent parallel review
-│   └── conversation_reply.pipe.json     # RocketRide pipeline: single-agent scoped reply
+│   ├── full-review.pipe.json                # RocketRide pipeline: 3-agent parallel review
+│   ├── conversation-reply-claude.pipe.json  # RocketRide pipeline: Claude conversation reply
+│   ├── conversation-reply-openai.pipe.json  # RocketRide pipeline: GPT conversation reply
+│   └── conversation-reply-gemini.pipe.json  # RocketRide pipeline: Gemini conversation reply
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                     # Entry point: event detection, gating, orchestration
@@ -218,10 +220,27 @@ These constants are defined in `src/config.py`:
 ```python
 # Model identifiers (not user-configurable in v1)
 MODELS = {
-    "claude-reviewer": "claude-sonnet-4-20250514",
-    "gpt-reviewer": "gpt-4o",
-    "gemini-reviewer": "gemini-2.0-flash",
-    "aggregator": "claude-sonnet-4-20250514",
+    "claude-reviewer": "claude-sonnet-4-6",
+    "gpt-reviewer": "openai-5-2",
+    "gemini-reviewer": "gemini-3-pro",
+    "aggregator": "claude-sonnet-4-6",
+}
+
+# Pipeline file paths
+FULL_REVIEW_PIPELINE_FILE = "full-review.pipe.json"
+
+# Maps agent node IDs to per-agent conversation reply pipeline filenames
+CONVERSATION_PIPELINE_FILES = {
+    "claude-reviewer": "conversation-reply-claude.pipe.json",
+    "gpt-reviewer": "conversation-reply-openai.pipe.json",
+    "gemini-reviewer": "conversation-reply-gemini.pipe.json",
+}
+
+# Maps response lane names to reviewer node IDs
+LANE_TO_REVIEWER = {
+    "claude": "claude-reviewer",
+    "openai": "gpt-reviewer",
+    "gemini": "gemini-reviewer",
 }
 
 # Maps GitHub App bot username to RocketRide pipeline node ID
@@ -239,7 +258,7 @@ Never hardcode model names or bot usernames outside of `src/config.py`. Always i
 
 ### Pipeline JSON files
 
-- Live in `pipelines/` directory. Two files: `full_review.pipe.json` and `conversation_reply.pipe.json`.
+- Live in `pipelines/` directory. Four files: `full-review.pipe.json` and three per-agent conversation reply files (`conversation-reply-claude.pipe.json`, `conversation-reply-openai.pipe.json`, `conversation-reply-gemini.pipe.json`).
 - Node IDs should be descriptive: `claude-reviewer`, `gpt-reviewer`, `gemini-reviewer`, `claude-aggregator`, not `node-1`, `node-2`.
 - Each reviewer node receives the same input schema. The pipeline definition handles the fan-out, not the Python orchestration.
 - The aggregator node's output schema must match the per-agent JSON payload structure defined in the PRD (see Section 5.2 and 5.3).

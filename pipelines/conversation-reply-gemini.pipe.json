@@ -1,0 +1,126 @@
+{
+  "viewport": {
+    "x": -174,
+    "y": -123,
+    "zoom": 1
+  },
+  "name": "conversation-reply",
+  "description": "Single-agent scoped reply to a developer comment in a review thread.",
+  "components": [
+    {
+      "id": "webhook_1",
+      "provider": "webhook",
+      "config": {
+        "hideForm": true,
+        "mode": "Source",
+        "parameters": {},
+        "type": "webhook"
+      },
+      "ui": {
+        "position": {
+          "x": 240,
+          "y": 360
+        },
+        "measured": {
+          "width": 160,
+          "height": 135
+        },
+        "data": {
+          "provider": "webhook",
+          "class": "source",
+          "type": "default"
+        },
+        "formDataValid": true
+      }
+    },
+    {
+      "id": "question_1",
+      "provider": "question",
+      "config": {
+        "profile": "default",
+        "default": {}
+      },
+      "ui": {
+        "position": {
+          "x": 480,
+          "y": 400
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "question",
+          "class": "text",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "text",
+          "from": "webhook_1"
+        }
+      ]
+    },
+    {
+      "id": "llm_gemini_1",
+      "provider": "llm_gemini",
+      "config": {
+        "profile": "gemini-3-pro",
+        "gemini-3-pro": {}
+      },
+      "ui": {
+        "position": {
+          "x": 700,
+          "y": 400
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "llm_gemini",
+          "class": "llm",
+          "type": "default"
+        },
+        "formDataValid": false
+      },
+      "input": [
+        {
+          "lane": "questions",
+          "from": "question_1"
+        }
+      ]
+    },
+    {
+      "id": "response_answers_1",
+      "provider": "response_answers",
+      "config": {
+        "laneName": "answers"
+      },
+      "ui": {
+        "position": {
+          "x": 940,
+          "y": 400
+        },
+        "measured": {
+          "width": 160,
+          "height": 65
+        },
+        "data": {
+          "provider": "response_answers",
+          "class": "infrastructure",
+          "type": "default"
+        },
+        "formDataValid": true
+      },
+      "input": [
+        {
+          "lane": "answers",
+          "from": "llm_gemini_1"
+        }
+      ]
+    }
+  ]
+}

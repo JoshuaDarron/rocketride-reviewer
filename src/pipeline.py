@@ -13,7 +13,12 @@ from pathlib import Path
 from pydantic import ValidationError
 from rocketride import RocketRideClient
 
-from src.config import ENGINE_PORT
+from src.config import (
+    CONVERSATION_PIPELINE_FILES,
+    ENGINE_PORT,
+    FULL_REVIEW_PIPELINE_FILE,
+    LANE_TO_REVIEWER,
+)
 from src.errors import PipelineError
 from src.models import AgentReview
 
@@ -53,7 +58,7 @@ class PipelineRunner:
             PipelineError: If the pipeline file is missing or execution
                 fails.
         """
-        pipeline_path = self._pipeline_dir / "full_review.pipe.json"
+        pipeline_path = self._pipeline_dir / FULL_REVIEW_PIPELINE_FILE
         if not pipeline_path.is_file():
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)
@@ -92,6 +97,14 @@ class PipelineRunner:
     def _parse_response(self, response: object) -> tuple[list[AgentReview], list[str]]:
         """Parse and validate pipeline response into AgentReview objects.
 
+        Supports two response formats:
+        - **Named-lane dict**: Keys match ``LANE_TO_REVIEWER`` (e.g.
+          ``{"claude": {...}, "openai": {...}, "gemini": {...}}``). Each
+          lane value is parsed and the ``reviewer`` field is injected from
+          the lane mapping.
+        - **Legacy list/dict**: A list of per-agent dicts (or a single
+          dict) each containing a ``reviewer`` field.
+
         Fault-tolerant: malformed agent responses are logged and skipped
         rather than raising. The agent name is added to the failed list.
 
@@ -105,6 +118,12 @@ class PipelineRunner:
             PipelineError: If the top-level response structure is
                 unexpected (not a dict or list).
         """
+        # Detect named-lane response format
+        if isinstance(response, dict) and set(response.keys()) <= set(
+            LANE_TO_REVIEWER.keys()
+        ):
+            return self._parse_lane_response(response)
+
         if isinstance(response, dict):
             results = [response]
         elif isinstance(response, list):
@@ -141,6 +160,54 @@ class PipelineRunner:
 
         return reviews, failed_agents
 
+    def _parse_lane_response(
+        self, response: dict[str, object]
+    ) -> tuple[list[AgentReview], list[str]]:
+        """Parse a named-lane response dict into AgentReview objects.
+
+        Each key in the response corresponds to a lane name from
+        ``LANE_TO_REVIEWER``. The reviewer name is injected from the
+        mapping so pipeline JSON does not need to include it.
+
+        Args:
+            response: Dict keyed by lane names (e.g. ``"claude"``,
+                ``"openai"``, ``"gemini"``).
+
+        Returns:
+            A tuple of (valid AgentReview objects, names of failed agents).
+        """
+        reviews: list[AgentReview] = []
+        failed_agents: list[str] = []
+
+        for lane_name, lane_data in response.items():
+            reviewer_name = LANE_TO_REVIEWER.get(lane_name, lane_name)
+
+            if not isinstance(lane_data, dict):
+                logger.warning(
+                    "Expected dict for lane %s, got %s — skipping",
+                    lane_name,
+                    type(lane_data).__name__,
+                )
+                failed_agents.append(reviewer_name)
+                continue
+
+            lane_data_with_reviewer = {**lane_data, "reviewer": reviewer_name}
+            try:
+                review = AgentReview(**lane_data_with_reviewer)
+            except (ValidationError, TypeError) as e:
+                logger.warning(
+                    "Invalid response from lane %s (%s): %s — skipping",
+                    lane_name,
+                    reviewer_name,
+                    e,
+                )
+                failed_agents.append(reviewer_name)
+                continue
+
+            reviews.append(review)
+
+        return reviews, failed_agents
+
     async def run_conversation_reply(
         self,
         agent_node_id: str,
@@ -149,7 +216,7 @@ class PipelineRunner:
     ) -> str:
         """Run the single-agent conversation reply pipeline.
 
-        Loads the ``conversation_reply.pipe.json`` pipeline, sends thread
+        Loads the per-agent conversation reply pipeline file, sends thread
         context and optional file context, and returns the agent's reply.
 
         Args:
@@ -162,10 +229,15 @@ class PipelineRunner:
             The reply text from the agent.
 
         Raises:
-            PipelineError: If the pipeline file is missing or execution
-                fails.
+            PipelineError: If the agent is unknown, the pipeline file is
+                missing, or execution fails.
         """
-        pipeline_path = self._pipeline_dir / "conversation_reply.pipe.json"
+        pipeline_filename = CONVERSATION_PIPELINE_FILES.get(agent_node_id)
+        if pipeline_filename is None:
+            msg = f"Unknown agent node ID for conversation reply: {agent_node_id}"
+            raise PipelineError(msg)
+
+        pipeline_path = self._pipeline_dir / pipeline_filename
         if not pipeline_path.is_file():
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)
