@@ -53,7 +53,7 @@ class PipelineRunner:
             PipelineError: If the pipeline file is missing or execution
                 fails.
         """
-        pipeline_path = self._pipeline_dir / "full_review.json"
+        pipeline_path = self._pipeline_dir / "full_review.pipe.json"
         if not pipeline_path.is_file():
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)
@@ -149,7 +149,7 @@ class PipelineRunner:
     ) -> str:
         """Run the single-agent conversation reply pipeline.
 
-        Loads the ``conversation_reply.json`` pipeline, sends thread
+        Loads the ``conversation_reply.pipe.json`` pipeline, sends thread
         context and optional file context, and returns the agent's reply.
 
         Args:
@@ -165,7 +165,7 @@ class PipelineRunner:
             PipelineError: If the pipeline file is missing or execution
                 fails.
         """
-        pipeline_path = self._pipeline_dir / "conversation_reply.json"
+        pipeline_path = self._pipeline_dir / "conversation_reply.pipe.json"
         if not pipeline_path.is_file():
             msg = f"Pipeline file not found: {pipeline_path}"
             raise PipelineError(msg)

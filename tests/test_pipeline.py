@@ -15,7 +15,7 @@ from src.pipeline import PipelineRunner
 @pytest.fixture()
 def pipeline_dir(tmp_path: Path) -> Path:
     """Create a temporary pipeline directory with a valid pipeline file."""
-    pipeline_file = tmp_path / "full_review.json"
+    pipeline_file = tmp_path / "full_review.pipe.json"
     pipeline_file.write_text(
         '{"name": "test", "nodes": [], "edges": []}',
         encoding="utf-8",
@@ -26,12 +26,12 @@ def pipeline_dir(tmp_path: Path) -> Path:
 @pytest.fixture()
 def conversation_pipeline_dir(tmp_path: Path) -> Path:
     """Create a temporary pipeline directory with both pipeline files."""
-    full_file = tmp_path / "full_review.json"
+    full_file = tmp_path / "full_review.pipe.json"
     full_file.write_text(
         '{"name": "test", "nodes": [], "edges": []}',
         encoding="utf-8",
     )
-    conv_file = tmp_path / "conversation_reply.json"
+    conv_file = tmp_path / "conversation_reply.pipe.json"
     conv_file.write_text(
         '{"name": "conversation-reply", "nodes": [], "edges": []}',
         encoding="utf-8",
@@ -299,9 +299,9 @@ class TestConversationReplyPipeline:
 
     @pytest.mark.asyncio()
     async def test_conversation_reply_pipeline_missing(self, tmp_path: Path) -> None:
-        """Missing conversation_reply.json raises PipelineError."""
-        # Only create full_review.json, not conversation_reply.json
-        full_file = tmp_path / "full_review.json"
+        """Missing conversation_reply.pipe.json raises PipelineError."""
+        # Only create full_review.pipe.json, not conversation_reply.pipe.json
+        full_file = tmp_path / "full_review.pipe.json"
         full_file.write_text('{"name": "test"}', encoding="utf-8")
 
         runner = PipelineRunner(pipeline_dir=tmp_path)

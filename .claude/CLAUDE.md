@@ -19,8 +19,8 @@ rocketride-reviewer/
 │   ├── PLANNING.md                 # Implementation plan and task breakdown
 │   └── SETUP.md                    # GitHub App setup guide for users
 ├── pipelines/
-│   ├── full_review.json            # RocketRide pipeline: 3-agent parallel review
-│   └── conversation_reply.json     # RocketRide pipeline: single-agent scoped reply
+│   ├── full_review.pipe.json            # RocketRide pipeline: 3-agent parallel review
+│   └── conversation_reply.pipe.json     # RocketRide pipeline: single-agent scoped reply
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                     # Entry point: event detection, gating, orchestration
@@ -239,7 +239,7 @@ Never hardcode model names or bot usernames outside of `src/config.py`. Always i
 
 ### Pipeline JSON files
 
-- Live in `pipelines/` directory. Two files: `full_review.json` and `conversation_reply.json`.
+- Live in `pipelines/` directory. Two files: `full_review.pipe.json` and `conversation_reply.pipe.json`.
 - Node IDs should be descriptive: `claude-reviewer`, `gpt-reviewer`, `gemini-reviewer`, `claude-aggregator`, not `node-1`, `node-2`.
 - Each reviewer node receives the same input schema. The pipeline definition handles the fan-out, not the Python orchestration.
 - The aggregator node's output schema must match the per-agent JSON payload structure defined in the PRD (see Section 5.2 and 5.3).
