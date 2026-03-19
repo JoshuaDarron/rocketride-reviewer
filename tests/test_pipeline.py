@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -124,29 +124,56 @@ def valid_lane_response() -> dict[str, object]:
     }
 
 
-def _make_task_status(response: object) -> MagicMock:
-    """Create a mock TASK_STATUS that model_dump()s to the response."""
-    from rocketride.types.task import TASK_STATE
-
-    status = MagicMock()
-    status.state = TASK_STATE.COMPLETED.value
-    status.errors = []
-    status.model_dump.return_value = response
-    return status
-
-
 def _make_mock_client(response: object) -> AsyncMock:
-    """Create a mock RocketRideClient that returns the given response.
-
-    The response is wrapped in a completed TASK_STATUS mock to simulate
-    the polling workflow.
-    """
+    """Create a mock that stashes the test response for ``_patch_runner``."""
     mock_client = AsyncMock()
     mock_client.use = AsyncMock(return_value={"token": "token-123"})
     mock_client.send = AsyncMock(return_value={"name": "task-id"})
-    mock_client.get_task_status = AsyncMock(
-        return_value=_make_task_status(response),
-    )
+    mock_client.terminate = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client._test_response = response
+    return mock_client
+
+
+class _patch_runner:
+    """Context manager: patches ``_execute_pipeline`` to return test data."""
+
+    def __init__(self, mock_client: AsyncMock) -> None:
+        self._patcher = patch.object(
+            PipelineRunner,
+            "_execute_pipeline",
+            new_callable=AsyncMock,
+            return_value=mock_client._test_response,
+        )
+
+    def __enter__(self) -> _patch_runner:
+        self._patcher.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._patcher.__exit__(*args)
+
+
+def _make_sdk_mock(response: object) -> AsyncMock:
+    """Create a mock RocketRideClient that goes through the real _execute_pipeline.
+
+    Use this for tests that verify SDK-level behaviour like token
+    termination or SDK errors.
+    """
+    from rocketride.types.task import TASK_STATE
+
+    status: dict = {
+        "state": TASK_STATE.COMPLETED.value,
+        "errors": [],
+    }
+    if isinstance(response, dict):
+        status.update(response)
+
+    mock_client = AsyncMock()
+    mock_client.use = AsyncMock(return_value={"token": "token-123"})
+    mock_client.send = AsyncMock(return_value={"name": "task-id"})
+    mock_client.get_task_status = AsyncMock(return_value=status)
     mock_client.terminate = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -171,7 +198,7 @@ class TestPipelineRunner:
         runner = PipelineRunner(pipeline_dir=pipeline_dir)
         mock_client = _make_mock_client(valid_agent_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 1
@@ -189,7 +216,7 @@ class TestPipelineRunner:
         malformed = {"reviewer": 12345, "comments": "not a list"}
         mock_client = _make_mock_client(malformed)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 0
@@ -206,7 +233,7 @@ class TestPipelineRunner:
         ]
         mock_client = _make_mock_client(responses)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 2
@@ -226,7 +253,7 @@ class TestPipelineRunner:
         ]
         mock_client = _make_mock_client(responses)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 0
@@ -256,7 +283,7 @@ class TestPipelineRunner:
     ) -> None:
         """Token is terminated even on successful runs."""
         runner = PipelineRunner(pipeline_dir=pipeline_dir)
-        mock_client = _make_mock_client(valid_agent_response)
+        mock_client = _make_sdk_mock(valid_agent_response)
 
         with patch("src.pipeline.RocketRideClient", return_value=mock_client):
             await runner.run_full_review(diff="diff content")
@@ -273,7 +300,7 @@ class TestPipelineRunner:
         runner = PipelineRunner(pipeline_dir=pipeline_dir)
         mock_client = _make_mock_client(valid_three_agent_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 3
@@ -287,7 +314,7 @@ class TestPipelineRunner:
         mock_client = _make_mock_client("just a string")
 
         with (
-            patch("src.pipeline.RocketRideClient", return_value=mock_client),
+            _patch_runner(mock_client),
             pytest.raises(PipelineError, match="Unexpected pipeline response type"),
         ):
             await runner.run_full_review(diff="diff content")
@@ -303,7 +330,7 @@ class TestPipelineRunner:
         ]
         mock_client = _make_mock_client(responses)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 2
@@ -322,7 +349,7 @@ class TestConversationReplyPipeline:
         response = {"reply": "The variable could be None if the API fails."}
         mock_client = _make_mock_client(response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reply = await runner.run_conversation_reply(
                 agent_node_id="claude-reviewer",
                 thread_context="Bot: Issue here.\nDev: Why?",
@@ -337,7 +364,7 @@ class TestConversationReplyPipeline:
         """File context is passed to the pipeline."""
         runner = PipelineRunner(pipeline_dir=conversation_pipeline_dir)
         response = {"reply": "Looking at the code, line 10 is problematic."}
-        mock_client = _make_mock_client(response)
+        mock_client = _make_sdk_mock(response)
 
         with patch("src.pipeline.RocketRideClient", return_value=mock_client):
             reply = await runner.run_conversation_reply(
@@ -409,7 +436,7 @@ class TestConversationReplyPipeline:
         mock_client = _make_mock_client(response)
 
         with (
-            patch("src.pipeline.RocketRideClient", return_value=mock_client),
+            _patch_runner(mock_client),
             pytest.raises(PipelineError, match="missing 'reply' field"),
         ):
             await runner.run_conversation_reply(
@@ -427,7 +454,7 @@ class TestConversationReplyPipeline:
         mock_client = _make_mock_client(response)
 
         with (
-            patch("src.pipeline.RocketRideClient", return_value=mock_client),
+            _patch_runner(mock_client),
             pytest.raises(PipelineError, match="missing 'reply' field"),
         ):
             await runner.run_conversation_reply(
@@ -444,7 +471,7 @@ class TestConversationReplyPipeline:
         mock_client = _make_mock_client("just a string")
 
         with (
-            patch("src.pipeline.RocketRideClient", return_value=mock_client),
+            _patch_runner(mock_client),
             pytest.raises(PipelineError, match="Unexpected conversation.*type"),
         ):
             await runner.run_conversation_reply(
@@ -459,7 +486,7 @@ class TestConversationReplyPipeline:
         """Token is terminated after conversation reply."""
         runner = PipelineRunner(pipeline_dir=conversation_pipeline_dir)
         response = {"reply": "Here is my response."}
-        mock_client = _make_mock_client(response)
+        mock_client = _make_sdk_mock(response)
 
         with patch("src.pipeline.RocketRideClient", return_value=mock_client):
             await runner.run_conversation_reply(
@@ -483,7 +510,7 @@ class TestLaneResponseParsing:
         runner = PipelineRunner(pipeline_dir=pipeline_dir)
         mock_client = _make_mock_client(valid_lane_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 3
@@ -503,7 +530,7 @@ class TestLaneResponseParsing:
         }
         mock_client = _make_mock_client(lane_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 1
@@ -523,7 +550,7 @@ class TestLaneResponseParsing:
         }
         mock_client = _make_mock_client(lane_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 2
@@ -541,7 +568,7 @@ class TestLaneResponseParsing:
         }
         mock_client = _make_mock_client(lane_response)
 
-        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+        with _patch_runner(mock_client):
             reviews, failures = await runner.run_full_review(diff="diff content")
 
         assert len(reviews) == 0
@@ -699,9 +726,8 @@ class TestInjectApiKeys:
 
         runner = PipelineRunner(pipeline_dir=tmp_path)
         response = {"reviewer": "claude-reviewer", "comments": []}
-        mock_client = _make_mock_client(response)
+        mock_client = _make_sdk_mock(response)
 
-        # Capture the pipeline content at call time (before temp file cleanup)
         captured: dict[str, object] = {}
 
         async def capture_use(
@@ -739,7 +765,7 @@ class TestInjectApiKeys:
 
         runner = PipelineRunner(pipeline_dir=tmp_path)
         response = {"reply": "Here is my response."}
-        mock_client = _make_mock_client(response)
+        mock_client = _make_sdk_mock(response)
 
         captured: dict[str, object] = {}
 

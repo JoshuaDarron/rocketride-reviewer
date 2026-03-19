@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import ValidationError
 from rocketride import RocketRideClient
-from rocketride.types.task import TASK_STATE, TASK_STATUS
+from rocketride.types.task import TASK_STATE
 
 from src.config import (
     CONVERSATION_PIPELINE_FILES,
@@ -33,6 +33,40 @@ from src.models import AgentReview
 
 logger = logging.getLogger(__name__)
 
+# Keys that belong to the TASK_STATUS envelope, not the pipeline output.
+_STATUS_METADATA_KEYS: set[str] = {
+    "name",
+    "project_id",
+    "source",
+    "completed",
+    "state",
+    "startTime",
+    "endTime",
+    "debuggerAttached",
+    "status",
+    "warnings",
+    "errors",
+    "currentObject",
+    "currentSize",
+    "notes",
+    "totalSize",
+    "totalCount",
+    "completedSize",
+    "completedCount",
+    "failedSize",
+    "failedCount",
+    "wordsSize",
+    "wordsCount",
+    "rateSize",
+    "rateCount",
+    "serviceUp",
+    "exitCode",
+    "exitMessage",
+    "pipeflow",
+    "metrics",
+    "tokens",
+}
+
 
 class PipelineRunner:
     """Executes RocketRide pipelines and collects agent responses.
@@ -46,6 +80,19 @@ class PipelineRunner:
         if pipeline_dir is None:
             pipeline_dir = Path(__file__).resolve().parent.parent / "pipelines"
         self._pipeline_dir = pipeline_dir
+
+    @staticmethod
+    def _strip_status_metadata(status: object) -> object:
+        """Remove TASK_STATUS envelope keys from the pipeline result.
+
+        The completed status dict may contain both the pipeline output
+        and engine metadata. This strips known metadata keys so only
+        pipeline-produced data remains. Non-dict values are returned
+        as-is.
+        """
+        if not isinstance(status, dict):
+            return status
+        return {k: v for k, v in status.items() if k not in _STATUS_METADATA_KEYS}
 
     @staticmethod
     def _inject_api_keys(pipeline: dict[str, Any]) -> dict[str, Any]:
@@ -96,7 +143,7 @@ class PipelineRunner:
         pipeline_data: dict[str, Any],
         input_data: dict[str, Any],
         error_prefix: str,
-    ) -> TASK_STATUS:
+    ) -> dict[str, Any]:
         """Start a pipeline, send data, poll for completion, and return results.
 
         Args:
@@ -149,7 +196,7 @@ class PipelineRunner:
         self,
         client: RocketRideClient,
         token: str,
-    ) -> TASK_STATUS:
+    ) -> dict[str, Any]:
         """Poll get_task_status until the pipeline completes or times out.
 
         Args:
@@ -166,8 +213,17 @@ class PipelineRunner:
         deadline = start_time + PIPELINE_POLL_TIMEOUT
 
         while time.monotonic() < deadline:
-            status = await client.get_task_status(token)
-            state = status.state
+            raw = await client.get_task_status(token)
+
+            # Normalise to dict regardless of SDK return type
+            if isinstance(raw, dict):
+                status = raw
+            elif hasattr(raw, "model_dump"):
+                status = raw.model_dump()
+            else:
+                status = dict(raw)
+
+            state = status.get("state", 0)
 
             logger.info(
                 "Pipeline status: %s (%.1fs elapsed)",
@@ -180,8 +236,9 @@ class PipelineRunner:
                 logger.debug("Pipeline result: %s", status)
                 return status
 
-            if status.errors:
-                error = status.errors[-1]
+            errors = status.get("errors", [])
+            if errors:
+                error = errors[-1]
                 msg = f"Pipeline failed: {error}"
                 raise PipelineError(msg)
 
@@ -230,12 +287,16 @@ class PipelineRunner:
         if file_context:
             input_data["file_context"] = file_context
 
-        status = await self._execute_pipeline(
+        raw_status = await self._execute_pipeline(
             pipeline_data, input_data, "Pipeline execution failed"
         )
-        response = status.model_dump()
         logger.info(
-            "Full review pipeline response: %s",
+            "Full review pipeline raw status: %s",
+            json.dumps(raw_status, default=str)[:2000],
+        )
+        response = self._strip_status_metadata(raw_status)
+        logger.info(
+            "Full review pipeline response (stripped): %s",
             json.dumps(response, default=str)[:2000],
         )
         return self._parse_response(response)
@@ -398,12 +459,16 @@ class PipelineRunner:
         if file_context:
             input_data["file_context"] = file_context
 
-        status = await self._execute_pipeline(
+        raw_status = await self._execute_pipeline(
             pipeline_data, input_data, "Conversation reply pipeline failed"
         )
-        response = status.model_dump()
         logger.info(
-            "Conversation pipeline response: %s",
+            "Conversation pipeline raw status: %s",
+            json.dumps(raw_status, default=str)[:2000],
+        )
+        response = self._strip_status_metadata(raw_status)
+        logger.info(
+            "Conversation pipeline response (stripped): %s",
             json.dumps(response, default=str)[:2000],
         )
 
