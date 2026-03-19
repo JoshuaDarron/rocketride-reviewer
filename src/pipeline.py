@@ -138,7 +138,11 @@ class PipelineRunner:
                 ) as client:
                     result = await client.use(filepath=str(tmp_pipeline_path))
                     token = result["token"]
-                    response = await client.send(token, input_data)
+                    response = await client.send(
+                        token,
+                        json.dumps(input_data),
+                        mimetype="application/json",
+                    )
             except PipelineError:
                 raise
             except Exception as e:
@@ -333,7 +337,11 @@ class PipelineRunner:
                 ) as client:
                     result = await client.use(filepath=str(tmp_pipeline_path))
                     token = result["token"]
-                    response = await client.send(token, input_data)
+                    response = await client.send(
+                        token,
+                        json.dumps(input_data),
+                        mimetype="application/json",
+                    )
             except PipelineError:
                 raise
             except Exception as e:
