@@ -89,6 +89,7 @@ ENGINE_DOWNLOAD_URL: str = (
     f"rocketride-server-{ENGINE_VERSION}-linux-x64.tar.gz"
 )
 ENGINE_BINARY_DIR: str = "/tmp/rocketride-server"
+ENGINE_AUTH_KEY: str = "MYAPIKEY"
 
 # Engine health check settings
 ENGINE_HEALTH_CHECK_INTERVAL: float = 2.0

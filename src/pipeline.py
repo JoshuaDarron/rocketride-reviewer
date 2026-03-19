@@ -17,6 +17,7 @@ from rocketride import RocketRideClient
 
 from src.config import (
     CONVERSATION_PIPELINE_FILES,
+    ENGINE_AUTH_KEY,
     ENGINE_PORT,
     FULL_REVIEW_PIPELINE_FILE,
     LANE_TO_REVIEWER,
@@ -122,7 +123,10 @@ class PipelineRunner:
 
         token = None
         try:
-            async with RocketRideClient(f"http://localhost:{ENGINE_PORT}") as client:
+            async with RocketRideClient(
+                f"http://localhost:{ENGINE_PORT}",
+                auth=ENGINE_AUTH_KEY,
+            ) as client:
                 token = await client.use(pipeline_data)
                 response = await client.send(token, input_data)
         except PipelineError:
@@ -134,7 +138,8 @@ class PipelineRunner:
             if token is not None:
                 try:
                     async with RocketRideClient(
-                        f"http://localhost:{ENGINE_PORT}"
+                        f"http://localhost:{ENGINE_PORT}",
+                        auth=ENGINE_AUTH_KEY,
                     ) as client:
                         await client.terminate(token)
                 except Exception:
@@ -302,7 +307,10 @@ class PipelineRunner:
 
         token = None
         try:
-            async with RocketRideClient(f"http://localhost:{ENGINE_PORT}") as client:
+            async with RocketRideClient(
+                f"http://localhost:{ENGINE_PORT}",
+                auth=ENGINE_AUTH_KEY,
+            ) as client:
                 token = await client.use(pipeline_data)
                 response = await client.send(token, input_data)
         except PipelineError:
@@ -314,7 +322,8 @@ class PipelineRunner:
             if token is not None:
                 try:
                     async with RocketRideClient(
-                        f"http://localhost:{ENGINE_PORT}"
+                        f"http://localhost:{ENGINE_PORT}",
+                        auth=ENGINE_AUTH_KEY,
                     ) as client:
                         await client.terminate(token)
                 except Exception:

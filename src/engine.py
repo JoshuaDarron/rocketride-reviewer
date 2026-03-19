@@ -19,6 +19,7 @@ from types import TracebackType
 import httpx
 
 from src.config import (
+    ENGINE_AUTH_KEY,
     ENGINE_BINARY_DIR,
     ENGINE_DOWNLOAD_URL,
     ENGINE_HEALTH_CHECK_INTERVAL,
@@ -144,7 +145,14 @@ class EngineManager:
         binary = self._find_binary()
         entrypoint = self._find_entrypoint()
 
-        cmd = [str(binary), str(entrypoint), "--port", str(self._port)]
+        cmd = [
+            str(binary),
+            str(entrypoint),
+            "--port",
+            str(self._port),
+            "--auth",
+            ENGINE_AUTH_KEY,
+        ]
         logger.info("Launching engine: %s", " ".join(cmd))
 
         try:
@@ -183,6 +191,7 @@ class EngineManager:
                 timeout window.
         """
         url = f"http://localhost:{self._port}/health"
+        headers = {"Authorization": f"Bearer {ENGINE_AUTH_KEY}"}
         start_time = time.monotonic()
         deadline = start_time + ENGINE_HEALTH_CHECK_TIMEOUT
 
@@ -197,7 +206,7 @@ class EngineManager:
                     raise EngineError(msg)
 
                 try:
-                    response = await client.get(url, timeout=5.0)
+                    response = await client.get(url, headers=headers, timeout=5.0)
                     if response.status_code == 200:
                         elapsed = time.monotonic() - start_time
                         logger.info("Engine is healthy (took %.1fs to start)", elapsed)
