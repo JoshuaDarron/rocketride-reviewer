@@ -11,6 +11,7 @@ import logging
 import subprocess
 import tarfile
 import tempfile
+import threading
 import time
 from pathlib import Path
 from types import TracebackType
@@ -101,6 +102,38 @@ class EngineManager:
         msg = f"Server binary not found in {self._binary_dir}"
         raise EngineError(msg)
 
+    def _find_entrypoint(self) -> Path:
+        """Locate the eaas.py entrypoint script in the extracted directory.
+
+        Raises:
+            EngineError: If the entrypoint script is not found.
+        """
+        for candidate in self._binary_dir.rglob("eaas.py"):
+            if candidate.is_file():
+                return candidate
+
+        msg = f"Entrypoint script eaas.py not found in {self._binary_dir}"
+        raise EngineError(msg)
+
+    @staticmethod
+    def _stream_output(stream: object, label: str) -> None:
+        """Read lines from a process stream and log them.
+
+        Runs in a background thread to avoid blocking the event loop.
+
+        Args:
+            stream: A readable stream (stdout or stderr from Popen).
+            label: Label for log messages (e.g., ``"stdout"``).
+        """
+        import io
+
+        if not isinstance(stream, io.TextIOWrapper):
+            return
+        for line in stream:
+            stripped = line.rstrip("\n")
+            if stripped:
+                logger.info("[engine %s] %s", label, stripped)
+
     async def start(self) -> None:
         """Download the binary (if needed) and launch the server process.
 
@@ -109,10 +142,14 @@ class EngineManager:
         """
         await self._download_and_extract()
         binary = self._find_binary()
+        entrypoint = self._find_entrypoint()
+
+        cmd = [str(binary), str(entrypoint), "--port", str(self._port)]
+        logger.info("Launching engine: %s", " ".join(cmd))
 
         try:
             self._process = subprocess.Popen(
-                [str(binary), "--port", str(self._port)],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -121,6 +158,18 @@ class EngineManager:
         except OSError as e:
             msg = f"Failed to start engine server: {e}"
             raise EngineError(msg) from e
+
+        # Stream engine output to our logger in background threads
+        threading.Thread(
+            target=self._stream_output,
+            args=(self._process.stdout, "stdout"),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._stream_output,
+            args=(self._process.stderr, "stderr"),
+            daemon=True,
+        ).start()
 
     async def wait_for_healthy(self) -> None:
         """Poll the engine health endpoint until ready or timeout.
@@ -139,6 +188,14 @@ class EngineManager:
 
         async with httpx.AsyncClient() as client:
             while time.monotonic() < deadline:
+                # Check if process has exited unexpectedly
+                if self._process is not None and self._process.poll() is not None:
+                    msg = (
+                        f"Engine process exited with code "
+                        f"{self._process.returncode} before becoming healthy"
+                    )
+                    raise EngineError(msg)
+
                 try:
                     response = await client.get(url, timeout=5.0)
                     if response.status_code == 200:

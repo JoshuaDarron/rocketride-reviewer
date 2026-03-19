@@ -164,11 +164,17 @@ class TestEngineStart:
     async def test_start_success(self, tmp_path: Path) -> None:
         engine = EngineManager()
         engine._binary_dir = tmp_path
-        binary = tmp_path / "rocketride-server"
+        binary = tmp_path / "engine"
         binary.touch()
+        ai_dir = tmp_path / "ai"
+        ai_dir.mkdir()
+        entrypoint = ai_dir / "eaas.py"
+        entrypoint.touch()
 
         mock_process = MagicMock()
         mock_process.pid = 12345
+        mock_process.stdout = None
+        mock_process.stderr = None
 
         with (
             patch.object(engine, "_download_and_extract", new_callable=AsyncMock),
@@ -180,14 +186,19 @@ class TestEngineStart:
             assert engine._process is mock_process
             mock_popen.assert_called_once()
             call_args = mock_popen.call_args
-            assert str(binary) in call_args.args[0]
+            cmd = call_args.args[0]
+            assert str(binary) in cmd
+            assert str(entrypoint) in cmd
 
     @pytest.mark.asyncio()
     async def test_start_failure_raises_engine_error(self, tmp_path: Path) -> None:
         engine = EngineManager()
         engine._binary_dir = tmp_path
-        binary = tmp_path / "rocketride-server"
+        binary = tmp_path / "engine"
         binary.touch()
+        ai_dir = tmp_path / "ai"
+        ai_dir.mkdir()
+        (ai_dir / "eaas.py").touch()
 
         with (
             patch.object(engine, "_download_and_extract", new_callable=AsyncMock),
@@ -228,6 +239,8 @@ class TestEngineHealthCheck:
     @pytest.mark.asyncio()
     async def test_timeout_raises_engine_error(self) -> None:
         engine = EngineManager()
+        engine._process = MagicMock()
+        engine._process.poll.return_value = None  # Process still running
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
@@ -239,7 +252,7 @@ class TestEngineHealthCheck:
         ):
             # Simulate time passing beyond timeout:
             # 1st call: start_time, 2nd call: deadline check, 3rd call: elapsed
-            mock_time.side_effect = [0.0, 301.0, 301.0]
+            mock_time.side_effect = [0.0, 601.0, 601.0]
 
             mock_client_cls.return_value.__aenter__ = AsyncMock(
                 return_value=mock_client
@@ -247,6 +260,26 @@ class TestEngineHealthCheck:
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
             with pytest.raises(EngineError, match="did not become healthy"):
+                await engine.wait_for_healthy()
+
+    @pytest.mark.asyncio()
+    async def test_process_crash_detected(self) -> None:
+        """If the engine process exits during health check, fail immediately."""
+        engine = EngineManager()
+        engine._process = MagicMock()
+        engine._process.poll.return_value = 1  # Process exited with code 1
+        engine._process.returncode = 1
+
+        with (
+            patch("src.engine.time.monotonic", return_value=0.0),
+            patch("src.engine.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=AsyncMock()
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with pytest.raises(EngineError, match="exited with code 1"):
                 await engine.wait_for_healthy()
 
 
