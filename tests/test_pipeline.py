@@ -128,7 +128,6 @@ def _make_mock_client(response: object) -> AsyncMock:
     """Create a mock that stashes the test response for ``_patch_runner``."""
     mock_client = AsyncMock()
     mock_client.use = AsyncMock(return_value={"token": "token-123"})
-    mock_client.send = AsyncMock(return_value={"name": "task-id"})
     mock_client.terminate = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -155,6 +154,16 @@ class _patch_runner:
         self._patcher.__exit__(*args)
 
 
+def _make_mock_pipe() -> AsyncMock:
+    """Create a mock DataPipe with async context manager support."""
+    mock_pipe = AsyncMock()
+    mock_pipe.write = AsyncMock()
+    mock_pipe.result = None
+    mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
+    mock_pipe.__aexit__ = AsyncMock(return_value=None)
+    return mock_pipe
+
+
 def _make_sdk_mock(response: object) -> AsyncMock:
     """Create a mock RocketRideClient that goes through the real _execute_pipeline.
 
@@ -170,13 +179,16 @@ def _make_sdk_mock(response: object) -> AsyncMock:
     if isinstance(response, dict):
         status.update(response)
 
+    mock_pipe = _make_mock_pipe()
+
     mock_client = AsyncMock()
     mock_client.use = AsyncMock(return_value={"token": "token-123"})
-    mock_client.send = AsyncMock(return_value={"name": "task-id"})
+    mock_client.pipe = AsyncMock(return_value=mock_pipe)
     mock_client.get_task_status = AsyncMock(return_value=status)
     mock_client.terminate = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client._mock_pipe = mock_pipe
     return mock_client
 
 
@@ -374,9 +386,11 @@ class TestConversationReplyPipeline:
             )
 
         assert "line 10" in reply
-        # Verify file_context was sent
-        send_call = mock_client.send.call_args
-        assert "file_context" in send_call.args[1]
+        # Verify file_context was sent via pipe().write()
+        mock_pipe = mock_client._mock_pipe
+        write_call = mock_pipe.write.call_args
+        written_data = json.loads(write_call.args[0].decode())
+        assert "file_context" in written_data
 
     @pytest.mark.asyncio()
     async def test_conversation_reply_pipeline_missing(self, tmp_path: Path) -> None:
@@ -731,9 +745,12 @@ class TestInjectApiKeys:
         captured: dict[str, object] = {}
 
         async def capture_use(
-            *, pipeline: object = None, **kwargs: object
+            *, filepath: object = None, **kwargs: object
         ) -> dict[str, str]:
-            captured["pipeline"] = pipeline
+            # Read the temp file to capture the pipeline with injected keys
+            captured["pipeline"] = json.loads(
+                Path(str(filepath)).read_text(encoding="utf-8")
+            )
             return {"token": "token-123"}
 
         mock_client.use = AsyncMock(side_effect=capture_use)
@@ -770,9 +787,11 @@ class TestInjectApiKeys:
         captured: dict[str, object] = {}
 
         async def capture_use(
-            *, pipeline: object = None, **kwargs: object
+            *, filepath: object = None, **kwargs: object
         ) -> dict[str, str]:
-            captured["pipeline"] = pipeline
+            captured["pipeline"] = json.loads(
+                Path(str(filepath)).read_text(encoding="utf-8")
+            )
             return {"token": "token-123"}
 
         mock_client.use = AsyncMock(side_effect=capture_use)
@@ -787,3 +806,62 @@ class TestInjectApiKeys:
             "apikey"
         ]
         assert apikey == "ant-key"
+
+
+class TestTempFileCleanup:
+    """Tests for temporary pipeline file cleanup."""
+
+    @pytest.mark.asyncio()
+    async def test_temp_file_cleaned_up_on_success(self, pipeline_dir: Path) -> None:
+        """Temp pipeline file is removed after successful execution."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+        response = {"reviewer": "claude-reviewer", "comments": []}
+        mock_client = _make_sdk_mock(response)
+
+        captured_paths: list[str] = []
+
+        async def capture_use(
+            *, filepath: object = None, **kwargs: object
+        ) -> dict[str, str]:
+            captured_paths.append(str(filepath))
+            return {"token": "token-123"}
+
+        mock_client.use = AsyncMock(side_effect=capture_use)
+
+        with patch("src.pipeline.RocketRideClient", return_value=mock_client):
+            await runner.run_full_review(diff="diff content")
+
+        assert len(captured_paths) == 1
+        assert not Path(captured_paths[0]).exists()
+
+    @pytest.mark.asyncio()
+    async def test_temp_file_cleaned_up_on_failure(self, pipeline_dir: Path) -> None:
+        """Temp pipeline file is removed even when the pipeline fails."""
+        runner = PipelineRunner(pipeline_dir=pipeline_dir)
+
+        mock_client = AsyncMock()
+        mock_client.use = AsyncMock(side_effect=TimeoutError("SDK timeout"))
+        mock_client.terminate = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        # Track temp files created during the run
+        import tempfile as _tempfile
+
+        original_mkstemp = _tempfile.mkstemp
+        created_files: list[str] = []
+
+        def tracking_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+            fd, path = original_mkstemp(**kwargs)
+            created_files.append(path)
+            return fd, path
+
+        with (
+            patch("src.pipeline.RocketRideClient", return_value=mock_client),
+            patch("src.pipeline.tempfile.mkstemp", side_effect=tracking_mkstemp),
+            pytest.raises(PipelineError, match="Pipeline execution failed"),
+        ):
+            await runner.run_full_review(diff="diff content")
+
+        assert len(created_files) == 1
+        assert not Path(created_files[0]).exists()

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -146,6 +147,11 @@ class PipelineRunner:
     ) -> dict[str, Any]:
         """Start a pipeline, send data, poll for completion, and return results.
 
+        Writes the pipeline definition to a temporary file and passes it via
+        ``filepath=`` so the engine can load it natively. Uses the ``pipe()``
+        context manager for data transfer when available, falling back to
+        polling ``get_task_status()`` for result retrieval.
+
         Args:
             pipeline_data: Parsed pipeline configuration dict.
             input_data: Input data to send to the pipeline.
@@ -158,39 +164,61 @@ class PipelineRunner:
             PipelineError: If the pipeline fails to start, times out, or
                 returns a failed status.
         """
-        token = None
+        token: str | None = None
+        tmp_file: str | None = None
         try:
+            # Write pipeline to a temp file so the engine loads it natively
+            fd, tmp_file = tempfile.mkstemp(suffix=".pipe.json")
+            os.close(fd)
+            Path(tmp_file).write_text(json.dumps(pipeline_data), encoding="utf-8")
+
             async with RocketRideClient(
                 f"http://localhost:{ENGINE_PORT}",
                 auth=ENGINE_AUTH_KEY,
             ) as client:
-                result = await client.use(pipeline=pipeline_data)
-                token = result["token"]
-                logger.info("Pipeline started with token: %s", token)
+                try:
+                    result = await client.use(filepath=tmp_file)
+                    token = result["token"]
+                    logger.info("Pipeline started with token: %s", token)
 
-                await client.send(
-                    token,
-                    json.dumps(input_data),
-                    mimetype="application/json",
-                )
-                logger.info("Data sent to pipeline, polling for completion")
+                    # Use pipe() context manager for data transfer
+                    pipe_result: dict[str, Any] | None = None
+                    async with await client.pipe(
+                        token, mimetype="application/json"
+                    ) as pipe:
+                        await pipe.write(json.dumps(input_data).encode())
+                    logger.info(
+                        "Data sent to pipeline via pipe(), polling for completion"
+                    )
 
-                return await self._poll_for_result(client, token)
+                    # pipe.close() may return result data; check for it
+                    if hasattr(pipe, "result") and isinstance(pipe.result, dict):
+                        pipe_result = pipe.result
+
+                    if pipe_result and any(
+                        k not in _STATUS_METADATA_KEYS for k in pipe_result
+                    ):
+                        logger.info("Got result from pipe(), skipping poll")
+                        return pipe_result
+
+                    return await self._poll_for_result(client, token)
+                finally:
+                    if token is not None:
+                        try:
+                            await client.terminate(token)
+                        except Exception:
+                            logger.warning("Failed to terminate pipeline token")
         except PipelineError:
             raise
         except Exception as e:
             msg = f"{error_prefix}: {e}"
             raise PipelineError(msg) from e
         finally:
-            if token is not None:
+            if tmp_file is not None:
                 try:
-                    async with RocketRideClient(
-                        f"http://localhost:{ENGINE_PORT}",
-                        auth=ENGINE_AUTH_KEY,
-                    ) as client:
-                        await client.terminate(token)
-                except Exception:
-                    logger.warning("Failed to terminate pipeline token")
+                    Path(tmp_file).unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Failed to clean up temp pipeline file")
 
     async def _poll_for_result(
         self,
