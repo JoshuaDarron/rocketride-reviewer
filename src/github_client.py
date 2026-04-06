@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 import httpx
-from github import Auth, GithubIntegration
+from github import Auth, GithubException, GithubIntegration
 
 from src.errors import (
     CommentPostingError,
@@ -43,9 +43,13 @@ class GitHubClient:
         try:
             auth = Auth.AppAuth(app_id, private_key)
             gi = GithubIntegration(auth=auth)
-            installation = gi.get_installations()[0]
+            installations = gi.get_installations()
+            if not installations:
+                msg = f"GitHub App {app_id} has no installations"
+                raise ConfigurationError(msg)
+            installation = installations[0]
             self._gh = installation.get_github_for_installation()
-        except Exception as e:
+        except (ValueError, GithubException) as e:
             msg = f"Failed to authenticate GitHub App {app_id}: {e}"
             raise ConfigurationError(msg) from e
 
@@ -134,7 +138,7 @@ class GitHubClient:
                 path=path,
                 line=line,
             )
-        except Exception as e:
+        except GithubException as e:
             msg = f"Failed to post comment on {path}:{line}: {e}"
             raise CommentPostingError(msg) from e
 
@@ -151,7 +155,7 @@ class GitHubClient:
         """
         try:
             self._pr.create_review(body=body, event=status)
-        except Exception as e:
+        except GithubException as e:
             msg = f"Failed to submit review with status {status}: {e}"
             raise ReviewSubmissionError(msg) from e
 
@@ -237,7 +241,7 @@ class GitHubClient:
         """
         try:
             self._pr.create_review_comment_reply(comment_id, body)
-        except Exception as e:
+        except GithubException as e:
             msg = f"Failed to post reply to comment {comment_id}: {e}"
             raise CommentPostingError(msg) from e
 
@@ -251,5 +255,5 @@ class GitHubClient:
         """
         try:
             self._pr.create_issue_comment(body)
-        except Exception:
+        except GithubException:
             logger.exception("Failed to post issue comment on PR #%d", self._pr_number)

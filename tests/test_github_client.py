@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from github import GithubException
 
 from src.errors import (
     CommentPostingError,
@@ -68,7 +69,10 @@ class TestGitHubClientInit:
 
     def test_auth_failure_raises_configuration_error(self) -> None:
         with (
-            patch("src.github_client.Auth.AppAuth", side_effect=Exception("bad key")),
+            patch(
+                "src.github_client.Auth.AppAuth",
+                side_effect=GithubException(401, "bad key", None),
+            ),
             pytest.raises(ConfigurationError, match="Failed to authenticate"),
         ):
             GitHubClient(
@@ -190,7 +194,9 @@ class TestPostReviewComment:
             repo_name="owner/repo",
             pr_number=42,
         )
-        mock_github_setup.pr.create_review_comment.side_effect = Exception("API error")
+        mock_github_setup.pr.create_review_comment.side_effect = GithubException(
+            422, "API error", None
+        )
 
         with pytest.raises(CommentPostingError, match="Failed to post comment"):
             await client.post_review_comment(
@@ -235,7 +241,9 @@ class TestSubmitReview:
             repo_name="owner/repo",
             pr_number=42,
         )
-        mock_github_setup.pr.create_review.side_effect = Exception("forbidden")
+        mock_github_setup.pr.create_review.side_effect = GithubException(
+            403, "forbidden", None
+        )
 
         with pytest.raises(ReviewSubmissionError, match="Failed to submit review"):
             await client.submit_review(status="APPROVE", body="LGTM")
@@ -269,6 +277,8 @@ class TestPostIssueComment:
             repo_name="owner/repo",
             pr_number=42,
         )
-        mock_github_setup.pr.create_issue_comment.side_effect = Exception("oops")
+        mock_github_setup.pr.create_issue_comment.side_effect = GithubException(
+            500, "oops", None
+        )
         # Should not raise
         await client.post_issue_comment("Summary comment")

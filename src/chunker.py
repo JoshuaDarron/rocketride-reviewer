@@ -98,7 +98,7 @@ def _split_into_file_diffs(diff: str) -> list[tuple[str, str]]:
             results.append((filename, section))
 
         return results
-    except Exception as exc:
+    except (TypeError, ValueError, IndexError, KeyError, AttributeError) as exc:
         raise ChunkingError(f"Failed to split diff into files: {exc}") from exc
 
 
@@ -228,9 +228,7 @@ def chunk_diff(
 
         return chunks
 
-    except ChunkingError:
-        raise
-    except Exception as exc:
+    except (TypeError, ValueError, IndexError, KeyError, AttributeError) as exc:
         raise ChunkingError(f"Failed to chunk diff: {exc}") from exc
 
 
@@ -313,9 +311,7 @@ def chunk_diff_detailed(
 
         return results
 
-    except ChunkingError:
-        raise
-    except Exception as exc:
+    except (TypeError, ValueError, IndexError, KeyError, AttributeError) as exc:
         raise ChunkingError(f"Failed to chunk diff: {exc}") from exc
 
 
@@ -377,7 +373,5 @@ def remap_line_numbers(
 
         return remapped
 
-    except ChunkingError:
-        raise
-    except Exception as exc:
+    except (TypeError, ValueError, IndexError, KeyError, AttributeError) as exc:
         raise ChunkingError(f"Failed to remap line numbers: {exc}") from exc

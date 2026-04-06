@@ -19,7 +19,16 @@ from typing import Any
 from src.aggregator import deduplicate_reviews
 from src.config import AGENT_CREDENTIALS, AGENT_ROUTING, BOT_USERNAMES, load_config
 from src.engine import EngineManager
-from src.errors import ConfigurationError, EngineError
+from src.errors import (
+    BaseReviewerError,
+    CommentPostingError,
+    ConfigurationError,
+    DiffRetrievalError,
+    EngineError,
+    GitHubClientError,
+    PipelineError,
+    ReviewSubmissionError,
+)
 from src.filters import get_effective_patterns, should_ignore
 from src.github_client import GitHubClient
 from src.models import AgentReview, ReviewConfig, Severity
@@ -333,7 +342,7 @@ async def _post_summary_comment(client: GitHubClient, message: str) -> None:
     """Post a summary comment on the PR. Best-effort."""
     try:
         await client.post_issue_comment(message)
-    except Exception:
+    except (CommentPostingError, GitHubClientError):
         logger.exception("Failed to post summary comment")
 
 
@@ -466,7 +475,7 @@ async def _handle_conversation_reply(
     if parent_path:
         try:
             file_context = await lookup_client.get_file_content(parent_path)
-        except Exception:
+        except (DiffRetrievalError, GitHubClientError):
             logger.warning("Could not fetch file content for %s", parent_path)
 
     # Run conversation pipeline
@@ -499,7 +508,7 @@ async def _handle_full_review(
     if not repo_name or not pr_number:
         msg = "Could not determine repo name or PR number from event"
         logger.error(msg)
-        raise RuntimeError(msg)
+        raise ConfigurationError(msg)
 
     # Initialize all agents
     agent_clients, agent_failures = _initialize_agents(repo_name, pr_number)
@@ -553,7 +562,7 @@ async def _handle_full_review(
             try:
                 content = await primary_client.get_file_content(file_path)
                 file_context[file_path] = content
-            except Exception:
+            except (DiffRetrievalError, GitHubClientError):
                 logger.warning("Could not fetch content for %s", file_path)
 
     # Start engine and run pipeline
@@ -573,7 +582,7 @@ async def _handle_full_review(
             "See workflow logs for details.",
         )
         raise
-    except Exception as e:
+    except (PipelineError, BaseReviewerError) as e:
         logger.error("Pipeline failure: %s", e)
         await _post_summary_comment(
             primary_client,
@@ -607,7 +616,7 @@ async def _handle_full_review(
                 approval_threshold=config.approval_threshold,
                 review_status=statuses.get(review.reviewer),
             )
-        except Exception:
+        except (CommentPostingError, ReviewSubmissionError):
             logger.exception("Failed to post review for %s", review.reviewer)
 
     # Report agent failures

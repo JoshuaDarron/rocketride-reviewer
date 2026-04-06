@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Severity(StrEnum):
@@ -39,7 +39,26 @@ class ReviewComment(BaseModel):
         default=CommentStatus.ADD,
         description="Whether this adds a new comment or resolves one",
     )
-    body: str = Field(min_length=1, description="Full text of the review comment")
+    body: str = Field(
+        min_length=1,
+        max_length=65536,
+        description="Full text of the review comment",
+    )
+
+    @field_validator("file")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """Reject empty, absolute, and path-traversal file paths."""
+        if not v or not v.strip():
+            msg = "file path must not be empty"
+            raise ValueError(msg)
+        if v.startswith("/") or v.startswith("\\"):
+            msg = "file path must be relative, not absolute"
+            raise ValueError(msg)
+        if ".." in v.split("/"):
+            msg = "file path must not contain '..' traversal"
+            raise ValueError(msg)
+        return v
 
 
 class AgentReview(BaseModel):

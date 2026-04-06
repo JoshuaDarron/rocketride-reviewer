@@ -207,7 +207,7 @@ class EngineManager:
                         response.status_code,
                     )
                     return
-                except httpx.HTTPError:
+                except (httpx.ConnectError, httpx.TimeoutException):
                     pass
                 await asyncio.sleep(ENGINE_HEALTH_CHECK_INTERVAL)
 

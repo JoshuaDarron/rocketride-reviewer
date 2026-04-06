@@ -37,11 +37,10 @@ def should_ignore(file_path: str, patterns: list[str]) -> bool:
             fnmatch_pattern = pattern.replace("**/", "*/")
             if fnmatch.fnmatch(normalized, fnmatch_pattern):
                 return True
-            # Also try matching with any prefix for nested paths
-            # e.g., "node_modules/**" should match "node_modules/foo/bar.js"
+            # Recursive match: "dir/**" → match "dir/" prefix + anything after
             if "**" in pattern:
-                prefix = pattern.split("**")[0]
-                if normalized.startswith(prefix):
+                fnmatch_recursive = pattern.replace("**", "*")
+                if fnmatch.fnmatch(normalized, fnmatch_recursive):
                     return True
         else:
             # Simple filename pattern — match against the file name only

@@ -992,13 +992,15 @@ class TestAgentFailureIsolation:
         mock_engine.__aenter__ = AsyncMock(return_value=mock_engine)
         mock_engine.__aexit__ = AsyncMock(return_value=None)
 
+        from src.errors import CommentPostingError
+
         call_count = 0
 
         async def mock_post_side_effect(**kwargs: object) -> None:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise RuntimeError("GitHub API error")
+                raise CommentPostingError("GitHub API error")
 
         with (
             patch.dict(os.environ, env, clear=True),

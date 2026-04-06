@@ -206,11 +206,11 @@ class PipelineRunner:
                     if token is not None:
                         try:
                             await client.terminate(token)
-                        except Exception:
+                        except (PipelineError, ConnectionError, OSError):
                             logger.warning("Failed to terminate pipeline token")
         except PipelineError:
             raise
-        except Exception as e:
+        except (ConnectionError, OSError, TimeoutError) as e:
             msg = f"{error_prefix}: {e}"
             raise PipelineError(msg) from e
         finally:
@@ -249,7 +249,8 @@ class PipelineRunner:
             elif hasattr(raw, "model_dump"):
                 status = raw.model_dump()
             else:
-                status = dict(raw)
+                msg = f"Unexpected task status type from SDK: {type(raw).__name__}"
+                raise PipelineError(msg)
 
             state = status.get("state", 0)
 

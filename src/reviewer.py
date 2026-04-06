@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from src.errors import CommentPostingError
+from src.errors import CommentPostingError, ReviewSubmissionError
 from src.github_client import GitHubClient
 from src.models import AgentReview, ReviewComment, Severity
 
@@ -145,5 +145,5 @@ async def post_agent_review(
 
     try:
         await github_client.submit_review(status=status, body=summary)
-    except Exception:
+    except ReviewSubmissionError:
         logger.exception("Failed to submit review for %s", review.reviewer)
